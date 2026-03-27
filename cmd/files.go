@@ -42,9 +42,25 @@ func FindFiles(filePath string, globPattern string) ([]string, error) {
 		}
 		return matches, nil
 	}
-	defaultPath := "Dockerfile"
-	if _, err := os.Stat(defaultPath); err != nil {
-		return nil, fmt.Errorf("no Dockerfile found in current directory")
+	// Default: recursively find all Dockerfiles and compose files
+	var allMatches []string
+	patterns := []string{
+		"**/Dockerfile",
+		"**/Dockerfile.*",
+		"**/docker-compose*.yml",
+		"**/docker-compose*.yaml",
+		"**/compose.yml",
+		"**/compose.yaml",
 	}
-	return []string{defaultPath}, nil
+	for _, p := range patterns {
+		matches, err := doublestar.FilepathGlob(p)
+		if err != nil {
+			continue
+		}
+		allMatches = append(allMatches, matches...)
+	}
+	if len(allMatches) == 0 {
+		return nil, fmt.Errorf("no Dockerfiles or compose files found")
+	}
+	return allMatches, nil
 }
