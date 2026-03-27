@@ -2,8 +2,8 @@ package cmd
 
 import (
 	"fmt"
-	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -24,16 +24,6 @@ func DetectFileType(path string) FileType {
 		return FileTypeCompose
 	}
 	return FileTypeDockerfile
-}
-
-var skipDirs = map[string]bool{
-	".git":         true,
-	".claude":      true,
-	"node_modules": true,
-	"vendor":       true,
-	".terraform":   true,
-	"dist":         true,
-	".next":        true,
 }
 
 func isTargetFile(name string) bool {
@@ -70,28 +60,28 @@ func FindFiles(filePath string, globPattern string) ([]string, error) {
 		}
 		return matches, nil
 	}
-	// Default: walk directory tree, skip heavy dirs
-	var allMatches []string
-	err := filepath.WalkDir(".", func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return nil
-		}
-		if d.IsDir() {
-			if skipDirs[d.Name()] {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if isTargetFile(d.Name()) {
-			allMatches = append(allMatches, path)
-		}
-		return nil
-	})
+	// Default: use git ls-files to respect .gitignore
+	files, err := findFilesWithGit()
+	if err == nil && len(files) > 0 {
+		return files, nil
+	}
+	return nil, fmt.Errorf("no Dockerfiles or compose files found")
+}
+
+func findFilesWithGit() ([]string, error) {
+	out, err := exec.Command("git", "ls-files", "--cached", "--others", "--exclude-standard").Output()
 	if err != nil {
-		return nil, fmt.Errorf("walking directory: %w", err)
+		return nil, err
 	}
-	if len(allMatches) == 0 {
-		return nil, fmt.Errorf("no Dockerfiles or compose files found")
+	var matches []string
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if isTargetFile(filepath.Base(line)) {
+			matches = append(matches, line)
+		}
 	}
-	return allMatches, nil
+	return matches, nil
 }
