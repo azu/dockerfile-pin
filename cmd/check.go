@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/azu/dockerfile-pin/internal/compose"
 	"github.com/azu/dockerfile-pin/internal/dockerfile"
 	"github.com/azu/dockerfile-pin/internal/resolver"
 	"github.com/spf13/cobra"
@@ -59,7 +60,14 @@ func runCheck(cmd *cobra.Command, args []string) error {
 	hasFail := false
 
 	for _, filePath := range files {
-		fileResults, err := checkDockerfile(ctx, filePath, res, checkSyntaxOnly, checkIgnore)
+		var fileResults []CheckResult
+		var err error
+		switch DetectFileType(filePath) {
+		case FileTypeCompose:
+			fileResults, err = checkComposeFile(ctx, filePath, res, checkSyntaxOnly, checkIgnore)
+		default:
+			fileResults, err = checkDockerfile(ctx, filePath, res, checkSyntaxOnly, checkIgnore)
+		}
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error processing %s: %v\n", filePath, err)
 			continue
@@ -160,6 +168,69 @@ func checkDockerfile(ctx context.Context, filePath string, res resolver.DigestRe
 		results = append(results, CheckResult{
 			File: filePath, Line: inst.StartLine, Image: inst.ImageRef,
 			Status: "ok", Message: "", Original: inst.Original,
+		})
+	}
+	return results, nil
+}
+
+func checkComposeFile(ctx context.Context, filePath string, res resolver.DigestResolver, syntaxOnly bool, ignoreImages []string) ([]CheckResult, error) {
+	content, err := os.ReadFile(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("reading %s: %w", filePath, err)
+	}
+	refs, err := compose.Parse(content)
+	if err != nil {
+		return nil, fmt.Errorf("parsing %s: %w", filePath, err)
+	}
+	var results []CheckResult
+	for _, ref := range refs {
+		if ref.Skip {
+			results = append(results, CheckResult{
+				File: filePath, Line: ref.Line, Image: ref.ImageRef,
+				Status: "skip", Message: ref.SkipReason, Original: "image: " + ref.RawRef,
+			})
+			continue
+		}
+		if isIgnored(ref.ImageRef, ignoreImages) {
+			results = append(results, CheckResult{
+				File: filePath, Line: ref.Line, Image: ref.ImageRef,
+				Status: "skip", Message: "ignored", Original: "image: " + ref.RawRef,
+			})
+			continue
+		}
+		if ref.Digest == "" {
+			results = append(results, CheckResult{
+				File: filePath, Line: ref.Line, Image: ref.ImageRef,
+				Status: "fail", Message: "missing digest", Original: "image: " + ref.RawRef,
+			})
+			continue
+		}
+		if syntaxOnly {
+			results = append(results, CheckResult{
+				File: filePath, Line: ref.Line, Image: ref.ImageRef,
+				Status: "ok", Message: "", Original: "image: " + ref.RawRef,
+			})
+			continue
+		}
+		fullRef := ref.ImageRef + "@" + ref.Digest
+		exists, err := res.Exists(ctx, fullRef)
+		if err != nil {
+			results = append(results, CheckResult{
+				File: filePath, Line: ref.Line, Image: ref.ImageRef,
+				Status: "warn", Message: fmt.Sprintf("registry check failed: %v", err), Original: "image: " + ref.RawRef,
+			})
+			continue
+		}
+		if !exists {
+			results = append(results, CheckResult{
+				File: filePath, Line: ref.Line, Image: ref.ImageRef,
+				Status: "fail", Message: "digest not found in registry", Original: "image: " + ref.RawRef,
+			})
+			continue
+		}
+		results = append(results, CheckResult{
+			File: filePath, Line: ref.Line, Image: ref.ImageRef,
+			Status: "ok", Message: "", Original: "image: " + ref.RawRef,
 		})
 	}
 	return results, nil

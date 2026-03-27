@@ -3,9 +3,27 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/bmatcuk/doublestar/v4"
 )
+
+type FileType int
+
+const (
+	FileTypeDockerfile FileType = iota
+	FileTypeCompose
+)
+
+func DetectFileType(path string) FileType {
+	base := filepath.Base(path)
+	lower := strings.ToLower(base)
+	if strings.HasSuffix(lower, ".yml") || strings.HasSuffix(lower, ".yaml") {
+		return FileTypeCompose
+	}
+	return FileTypeDockerfile
+}
 
 func FindFiles(filePath string, globPattern string) ([]string, error) {
 	if filePath != "" {

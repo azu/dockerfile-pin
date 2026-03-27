@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/azu/dockerfile-pin/internal/compose"
 	"github.com/azu/dockerfile-pin/internal/dockerfile"
 	"github.com/azu/dockerfile-pin/internal/resolver"
 	"github.com/spf13/cobra"
@@ -45,10 +46,60 @@ func runPin(cmd *cobra.Command, args []string) error {
 	res := &resolver.CraneResolver{}
 
 	for _, filePath := range files {
-		if err := pinDockerfile(ctx, filePath, res, pinDryRun, pinUpdate); err != nil {
+		var err error
+		switch DetectFileType(filePath) {
+		case FileTypeCompose:
+			err = pinComposeFile(ctx, filePath, res, pinDryRun, pinUpdate)
+		default:
+			err = pinDockerfile(ctx, filePath, res, pinDryRun, pinUpdate)
+		}
+		if err != nil {
 			fmt.Fprintf(os.Stderr, "error processing %s: %v\n", filePath, err)
 		}
 	}
+	return nil
+}
+
+func pinComposeFile(ctx context.Context, filePath string, res resolver.DigestResolver, dryRun bool, update bool) error {
+	content, err := os.ReadFile(filePath)
+	if err != nil {
+		return fmt.Errorf("reading %s: %w", filePath, err)
+	}
+	refs, err := compose.Parse(content)
+	if err != nil {
+		return fmt.Errorf("parsing %s: %w", filePath, err)
+	}
+	digests := make(map[int]string)
+	for i, ref := range refs {
+		if ref.Skip {
+			if ref.SkipReason != "" {
+				fmt.Fprintf(os.Stderr, "SKIP  %s:%d  %s  %s\n", filePath, ref.Line, ref.RawRef, ref.SkipReason)
+			}
+			continue
+		}
+		if ref.Digest != "" && !update {
+			continue
+		}
+		digest, err := res.Resolve(ctx, ref.ImageRef)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "WARN  %s:%d  %s  failed to resolve: %v\n", filePath, ref.Line, ref.RawRef, err)
+			continue
+		}
+		digests[i] = digest
+	}
+	if len(digests) == 0 {
+		return nil
+	}
+	result := compose.RewriteFile(string(content), refs, digests)
+	if dryRun {
+		fmt.Printf("--- %s\n", filePath)
+		fmt.Print(result)
+		return nil
+	}
+	if err := os.WriteFile(filePath, []byte(result), 0644); err != nil {
+		return fmt.Errorf("writing %s: %w", filePath, err)
+	}
+	fmt.Printf("pinned %d image(s) in %s\n", len(digests), filePath)
 	return nil
 }
 
