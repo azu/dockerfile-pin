@@ -1,0 +1,6 @@
+[tagpr]
+vPrefix = true
+releaseBranch = main
+versionFile = -
+majorLabels = Type: Breaking Change
+minorLabels = Type: Feature
