@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/azu/dockerfile-pin/internal/compose"
@@ -37,6 +39,16 @@ func init() {
 	rootCmd.AddCommand(runCmd)
 }
 
+// parsedFile holds the parsed result of a single file.
+type parsedFile struct {
+	path        string
+	fileType    FileType
+	dockerInsts []dockerfile.FromInstruction
+	composeRefs []compose.ComposeImageRef
+	content     []byte
+	imageRefs   []string // unique image refs that need resolving
+}
+
 func runRun(cmd *cobra.Command, args []string) error {
 	files, err := FindFiles(runFilePath, runGlob)
 	if err != nil {
@@ -46,113 +58,165 @@ func runRun(cmd *cobra.Command, args []string) error {
 	dryRun := !runWrite
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
-	res := &resolver.CraneResolver{}
 
 	fmt.Printf("found %d file(s)\n", len(files))
-	for i, filePath := range files {
-		fmt.Printf("[%d/%d] %s\n", i+1, len(files), filePath)
-		var err error
-		switch DetectFileType(filePath) {
+
+	// Phase 1: Parse all files and collect unique image refs
+	var parsed []parsedFile
+	uniqueRefs := make(map[string]bool)
+
+	for _, filePath := range files {
+		pf, err := parseFile(filePath, runUpdate)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error parsing %s: %v\n", filePath, err)
+			continue
+		}
+		parsed = append(parsed, pf)
+		for _, ref := range pf.imageRefs {
+			uniqueRefs[ref] = true
+		}
+	}
+
+	// Phase 2: Resolve all unique digests in parallel
+	refs := make([]string, 0, len(uniqueRefs))
+	for ref := range uniqueRefs {
+		refs = append(refs, ref)
+	}
+	fmt.Printf("resolving %d unique image(s)...\n", len(refs))
+
+	res := &resolver.CraneResolver{}
+	digestMap := resolveParallel(ctx, res, refs)
+
+	// Phase 3: Apply digests and output results
+	for _, pf := range parsed {
+		switch pf.fileType {
 		case FileTypeCompose:
-			err = pinComposeFile(ctx, filePath, res, dryRun, runUpdate)
+			applyCompose(pf, digestMap, dryRun)
 		default:
-			err = pinDockerfile(ctx, filePath, res, dryRun, runUpdate)
-		}
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "error processing %s: %v\n", filePath, err)
+			applyDockerfile(pf, digestMap, dryRun)
 		}
 	}
 	return nil
 }
 
-func pinComposeFile(ctx context.Context, filePath string, res resolver.DigestResolver, dryRun bool, update bool) error {
+func parseFile(filePath string, update bool) (parsedFile, error) {
 	content, err := os.ReadFile(filePath)
 	if err != nil {
-		return fmt.Errorf("reading %s: %w", filePath, err)
+		return parsedFile{}, fmt.Errorf("reading %s: %w", filePath, err)
 	}
-	refs, err := compose.Parse(content)
-	if err != nil {
-		return fmt.Errorf("parsing %s: %w", filePath, err)
+
+	pf := parsedFile{
+		path:     filePath,
+		fileType: DetectFileType(filePath),
+		content:  content,
 	}
-	digests := make(map[int]string)
-	for i, ref := range refs {
-		if ref.Skip {
-			if ref.SkipReason != "" {
-				fmt.Fprintf(os.Stderr, "SKIP  %s:%d  %s  %s\n", filePath, ref.Line, ref.RawRef, ref.SkipReason)
-			}
-			continue
-		}
-		if ref.Digest != "" && !update {
-			continue
-		}
-		digest, err := res.Resolve(ctx, ref.ImageRef)
+
+	switch pf.fileType {
+	case FileTypeCompose:
+		refs, err := compose.Parse(content)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "WARN  %s:%d  %s  failed to resolve: %v\n", filePath, ref.Line, ref.RawRef, err)
-			continue
+			return parsedFile{}, fmt.Errorf("parsing %s: %w", filePath, err)
 		}
-		digests[i] = digest
+		pf.composeRefs = refs
+		for _, ref := range refs {
+			if ref.Skip || (ref.Digest != "" && !update) {
+				continue
+			}
+			pf.imageRefs = append(pf.imageRefs, ref.ImageRef)
+		}
+	default:
+		insts, err := dockerfile.Parse(strings.NewReader(string(content)))
+		if err != nil {
+			return parsedFile{}, fmt.Errorf("parsing %s: %w", filePath, err)
+		}
+		pf.dockerInsts = insts
+		for _, inst := range insts {
+			if inst.Skip || (inst.Digest != "" && !update) {
+				continue
+			}
+			pf.imageRefs = append(pf.imageRefs, inst.ImageRef)
+		}
 	}
-	if len(digests) == 0 {
-		return nil
-	}
-	result := compose.RewriteFile(string(content), refs, digests)
-	if dryRun {
-		fmt.Printf("--- %s\n", filePath)
-		fmt.Print(result)
-		return nil
-	}
-	if err := os.WriteFile(filePath, []byte(result), 0644); err != nil {
-		return fmt.Errorf("writing %s: %w", filePath, err)
-	}
-	fmt.Printf("pinned %d image(s) in %s\n", len(digests), filePath)
-	return nil
+	return pf, nil
 }
 
-func pinDockerfile(ctx context.Context, filePath string, res resolver.DigestResolver, dryRun bool, update bool) error {
-	content, err := os.ReadFile(filePath)
-	if err != nil {
-		return fmt.Errorf("reading %s: %w", filePath, err)
-	}
+// resolveParallel resolves digests for all image refs concurrently.
+func resolveParallel(ctx context.Context, res resolver.DigestResolver, refs []string) map[string]string {
+	results := make(map[string]string)
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, runtime.NumCPU()*2)
 
-	instructions, err := dockerfile.Parse(strings.NewReader(string(content)))
-	if err != nil {
-		return fmt.Errorf("parsing %s: %w", filePath, err)
-	}
+	for _, ref := range refs {
+		wg.Add(1)
+		go func(imageRef string) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
 
-	digests := make(map[int]string)
-	for i, inst := range instructions {
-		if inst.Skip {
-			if inst.SkipReason == "unresolved ARG variable" {
-				fmt.Fprintf(os.Stderr, "WARN  %s:%d  %s  %s\n", filePath, inst.StartLine, inst.Original, inst.SkipReason)
+			digest, err := res.Resolve(ctx, imageRef)
+			mu.Lock()
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "WARN  %s  failed to resolve: %v\n", imageRef, err)
+			} else {
+				results[imageRef] = digest
+				fmt.Printf("  resolved %s → %s\n", imageRef, digest[:19])
 			}
-			continue
-		}
-		if inst.Digest != "" && !update {
-			continue
-		}
-		digest, err := res.Resolve(ctx, inst.ImageRef)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "WARN  %s:%d  %s  failed to resolve: %v\n", filePath, inst.StartLine, inst.Original, err)
-			continue
-		}
-		digests[i] = digest
+			mu.Unlock()
+		}(ref)
 	}
+	wg.Wait()
+	return results
+}
 
+func applyDockerfile(pf parsedFile, digestMap map[string]string, dryRun bool) {
+	digests := make(map[int]string)
+	for i, inst := range pf.dockerInsts {
+		if inst.Skip || inst.Digest != "" {
+			continue
+		}
+		if d, ok := digestMap[inst.ImageRef]; ok {
+			digests[i] = d
+		}
+	}
 	if len(digests) == 0 {
-		return nil
+		return
 	}
-
-	result := dockerfile.RewriteFile(string(content), instructions, digests)
-
+	result := dockerfile.RewriteFile(string(pf.content), pf.dockerInsts, digests)
 	if dryRun {
-		fmt.Printf("--- %s\n", filePath)
+		fmt.Printf("--- %s\n", pf.path)
 		fmt.Print(result)
-		return nil
+		return
 	}
+	if err := os.WriteFile(pf.path, []byte(result), 0644); err != nil {
+		fmt.Fprintf(os.Stderr, "error writing %s: %v\n", pf.path, err)
+		return
+	}
+	fmt.Printf("pinned %d image(s) in %s\n", len(digests), pf.path)
+}
 
-	if err := os.WriteFile(filePath, []byte(result), 0644); err != nil {
-		return fmt.Errorf("writing %s: %w", filePath, err)
+func applyCompose(pf parsedFile, digestMap map[string]string, dryRun bool) {
+	digests := make(map[int]string)
+	for i, ref := range pf.composeRefs {
+		if ref.Skip || ref.Digest != "" {
+			continue
+		}
+		if d, ok := digestMap[ref.ImageRef]; ok {
+			digests[i] = d
+		}
 	}
-	fmt.Printf("pinned %d image(s) in %s\n", len(digests), filePath)
-	return nil
+	if len(digests) == 0 {
+		return
+	}
+	result := compose.RewriteFile(string(pf.content), pf.composeRefs, digests)
+	if dryRun {
+		fmt.Printf("--- %s\n", pf.path)
+		fmt.Print(result)
+		return
+	}
+	if err := os.WriteFile(pf.path, []byte(result), 0644); err != nil {
+		fmt.Fprintf(os.Stderr, "error writing %s: %v\n", pf.path, err)
+		return
+	}
+	fmt.Printf("pinned %d image(s) in %s\n", len(digests), pf.path)
 }

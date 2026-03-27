@@ -3,6 +3,7 @@ package resolver
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/google/go-containerregistry/pkg/authn"
@@ -15,9 +16,9 @@ type DigestResolver interface {
 	Exists(ctx context.Context, imageRef string) (bool, error)
 }
 
-type CraneResolver struct{}
-
 const perRequestTimeout = 30 * time.Second
+
+type CraneResolver struct{}
 
 func (r *CraneResolver) Resolve(ctx context.Context, imageRef string) (string, error) {
 	ref, err := name.ParseReference(imageRef)
@@ -45,6 +46,47 @@ func (r *CraneResolver) Exists(ctx context.Context, imageRef string) (bool, erro
 		return false, nil
 	}
 	return true, nil
+}
+
+// CachedResolver wraps a DigestResolver with an in-memory cache.
+// Safe for concurrent use.
+type CachedResolver struct {
+	inner DigestResolver
+	mu    sync.RWMutex
+	cache map[string]cacheEntry
+}
+
+type cacheEntry struct {
+	digest string
+	err    error
+}
+
+func NewCachedResolver(inner DigestResolver) *CachedResolver {
+	return &CachedResolver{
+		inner: inner,
+		cache: make(map[string]cacheEntry),
+	}
+}
+
+func (r *CachedResolver) Resolve(ctx context.Context, imageRef string) (string, error) {
+	r.mu.RLock()
+	entry, ok := r.cache[imageRef]
+	r.mu.RUnlock()
+	if ok {
+		return entry.digest, entry.err
+	}
+
+	digest, err := r.inner.Resolve(ctx, imageRef)
+
+	r.mu.Lock()
+	r.cache[imageRef] = cacheEntry{digest: digest, err: err}
+	r.mu.Unlock()
+
+	return digest, err
+}
+
+func (r *CachedResolver) Exists(ctx context.Context, imageRef string) (bool, error) {
+	return r.inner.Exists(ctx, imageRef)
 }
 
 type MockResolver struct {
