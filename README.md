@@ -18,8 +18,21 @@ sudo mv dockerfile-pin /usr/local/bin/
 
 ### aqua
 
+Add to your `aqua.yaml`:
+
+```yaml
+registries:
+  - type: github_content
+    repo_owner: azu
+    repo_name: dockerfile-pin
+    ref: main
+    path: registry.yaml
+packages:
+  - name: azu/dockerfile-pin
+```
+
 ```bash
-aqua g -i azu/dockerfile-pin
+aqua i
 ```
 
 ### Go
