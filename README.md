@@ -22,13 +22,15 @@ Add to your `aqua.yaml`:
 
 ```yaml
 registries:
-  - type: github_content
+  - name: dockerfile-pin
+    type: github_content
     repo_owner: azu
     repo_name: dockerfile-pin
-    ref: main
+    ref: <commit-sha> # main
     path: registry.yaml
 packages:
-  - name: azu/dockerfile-pin
+  - name: azu/dockerfile-pin@v1.0.1
+    registry: dockerfile-pin
 ```
 
 ```bash
