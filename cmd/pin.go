@@ -12,36 +12,37 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var pinCmd = &cobra.Command{
-	Use:   "pin",
+var runCmd = &cobra.Command{
+	Use:   "run",
 	Short: "Pin FROM images to their digests",
-	Long:  "Parse Dockerfile FROM lines and add @sha256:<digest> to each image reference.",
-	RunE:  runPin,
+	Long:  "Parse Dockerfile FROM lines and add @sha256:<digest> to each image reference.\nBy default, shows changes without writing files (dry-run). Use --write to apply changes.",
+	RunE:  runRun,
 }
 
 var (
-	pinFilePath string
-	pinGlob     string
-	pinDryRun   bool
-	pinUpdate   bool
-	pinPlatform string
+	runFilePath string
+	runGlob     string
+	runWrite    bool
+	runUpdate   bool
+	runPlatform string
 )
 
 func init() {
-	pinCmd.Flags().StringVarP(&pinFilePath, "file", "f", "", "Dockerfile path (default: ./Dockerfile)")
-	pinCmd.Flags().StringVar(&pinGlob, "glob", "", "Glob pattern to find Dockerfiles")
-	pinCmd.Flags().BoolVar(&pinDryRun, "dry-run", false, "Show changes without writing files")
-	pinCmd.Flags().BoolVar(&pinUpdate, "update", false, "Update existing digests")
-	pinCmd.Flags().StringVar(&pinPlatform, "platform", "", "Platform for multi-arch images (e.g., linux/amd64)")
-	rootCmd.AddCommand(pinCmd)
+	runCmd.Flags().StringVarP(&runFilePath, "file", "f", "", "Dockerfile path (default: ./Dockerfile)")
+	runCmd.Flags().StringVar(&runGlob, "glob", "", "Glob pattern to find Dockerfiles")
+	runCmd.Flags().BoolVar(&runWrite, "write", false, "Write changes to files (default is dry-run)")
+	runCmd.Flags().BoolVar(&runUpdate, "update", false, "Update existing digests")
+	runCmd.Flags().StringVar(&runPlatform, "platform", "", "Platform for multi-arch images (e.g., linux/amd64)")
+	rootCmd.AddCommand(runCmd)
 }
 
-func runPin(cmd *cobra.Command, args []string) error {
-	files, err := FindFiles(pinFilePath, pinGlob)
+func runRun(cmd *cobra.Command, args []string) error {
+	files, err := FindFiles(runFilePath, runGlob)
 	if err != nil {
 		return err
 	}
 
+	dryRun := !runWrite
 	ctx := context.Background()
 	res := &resolver.CraneResolver{}
 
@@ -49,9 +50,9 @@ func runPin(cmd *cobra.Command, args []string) error {
 		var err error
 		switch DetectFileType(filePath) {
 		case FileTypeCompose:
-			err = pinComposeFile(ctx, filePath, res, pinDryRun, pinUpdate)
+			err = pinComposeFile(ctx, filePath, res, dryRun, runUpdate)
 		default:
-			err = pinDockerfile(ctx, filePath, res, pinDryRun, pinUpdate)
+			err = pinDockerfile(ctx, filePath, res, dryRun, runUpdate)
 		}
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error processing %s: %v\n", filePath, err)

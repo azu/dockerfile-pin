@@ -12,28 +12,29 @@ Or download from [GitHub Releases](https://github.com/azu/dockerfile-pin/release
 
 ## Usage
 
-### Pin
+### Run
 
 Add digests to Dockerfile `FROM` lines or docker-compose.yml `image` fields.
+By default, shows changes without modifying files (dry-run).
 
 ```bash
-# Pin a single Dockerfile (default: ./Dockerfile)
-dockerfile-pin pin
+# Preview changes (dry-run, default)
+dockerfile-pin run
 
-# Pin a specific file
-dockerfile-pin pin -f path/to/Dockerfile
+# Preview a specific file
+dockerfile-pin run -f path/to/Dockerfile
 
-# Pin multiple files using glob
-dockerfile-pin pin --glob '**/Dockerfile*'
+# Preview multiple files using glob
+dockerfile-pin run --glob '**/Dockerfile*'
 
-# Pin docker-compose.yml
-dockerfile-pin pin -f docker-compose.yml
+# Preview docker-compose.yml
+dockerfile-pin run -f docker-compose.yml
 
-# Preview changes without modifying files
-dockerfile-pin pin --dry-run
+# Actually write changes to files
+dockerfile-pin run --write
 
 # Update existing digests
-dockerfile-pin pin --update
+dockerfile-pin run --write --update
 ```
 
 **Before:**
@@ -128,7 +129,7 @@ jobs:
 
 - Uses [go-containerregistry](https://github.com/google/go-containerregistry) (crane) for registry API calls
 - Uses BuildKit's Dockerfile parser for accurate FROM line parsing
-- `pin` resolves digests via HEAD requests (does not count against Docker Hub pull rate limits)
+- `run` resolves digests via HEAD requests (does not count against Docker Hub pull rate limits)
 - `check` verifies digest existence via HEAD requests
 - Authenticates using `~/.docker/config.json` (supports Docker Hub, GHCR, GCR, ECR, etc.)
 
