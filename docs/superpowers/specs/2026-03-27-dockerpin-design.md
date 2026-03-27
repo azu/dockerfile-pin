@@ -24,7 +24,7 @@ Existing tools (dockpin, docker-lock, etc.) have stalled maintenance. Building o
 ## Non-Goals
 
 - Automatic digest updates (delegated to Renovate)
-- docker-compose.yml or Kubernetes manifest support (future consideration)
+- Kubernetes manifest support (future consideration)
 - Base image vulnerability scanning (delegated to Trivy, etc.)
 
 ---

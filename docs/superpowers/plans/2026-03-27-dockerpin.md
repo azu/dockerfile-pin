@@ -2,11 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build a CLI tool that pins Dockerfile FROM lines to `@sha256:<digest>` and validates pinned digests.
+**Goal:** Build a CLI tool that pins Dockerfile FROM lines and docker-compose.yml image fields to `@sha256:<digest>` and validates pinned digests.
 
-**Architecture:** BuildKit parser extracts FROM instructions and ARG defaults from Dockerfiles. Crane library resolves digests from registries via HEAD requests. Cobra provides the CLI with `pin` and `check` subcommands.
+**Architecture:** BuildKit parser extracts FROM instructions from Dockerfiles. YAML node parser extracts image fields from docker-compose.yml. Crane library resolves digests from registries via HEAD requests. Cobra provides the CLI with `pin` and `check` subcommands.
 
-**Tech Stack:** Go, github.com/google/go-containerregistry, github.com/moby/buildkit, github.com/spf13/cobra, github.com/bmatcuk/doublestar/v4
+**Tech Stack:** Go, github.com/google/go-containerregistry, github.com/moby/buildkit, github.com/spf13/cobra, github.com/bmatcuk/doublestar/v4, gopkg.in/yaml.v3
 
 ---
 
@@ -25,6 +25,11 @@ internal/
     parse_test.go
     rewrite.go                       # Rewrite FROM lines with digests
     rewrite_test.go
+  compose/
+    parse.go                         # Parse docker-compose.yml → []ComposeImageRef
+    parse_test.go
+    rewrite.go                       # Rewrite image: fields with digests
+    rewrite_test.go
   resolver/
     resolver.go                      # DigestResolver interface + CraneResolver
     resolver_test.go
@@ -34,6 +39,14 @@ testdata/
   with_args.Dockerfile
   already_pinned.Dockerfile
   mixed.Dockerfile
+  docker-compose.yml               # Compose test fixture
+  docker-compose-pinned.yml        # Expected output for compose
+.github/
+  workflows/
+    ci.yml                           # CI: test, lint, build
+    release.yml                      # Release: goreleaser
+.golangci.yml                        # golangci-lint config
+.goreleaser.yml                      # goreleaser config
 ```
 
 ---
@@ -1485,13 +1498,14 @@ git commit -m "feat: implement check subcommand with syntax and registry validat
 
 ---
 
-### Task 9: End-to-End Test
+### Task 9: End-to-End Test with Comprehensive Dockerfile Patterns
 
 **Files:**
 - Create: `testdata/mixed.Dockerfile`
+- Create: `testdata/real_world.Dockerfile`
 - Create: `e2e_test.go`
 
-- [ ] **Step 1: Create test fixture**
+- [ ] **Step 1: Create test fixtures with real-world patterns**
 
 ```dockerfile
 # testdata/mixed.Dockerfile
@@ -1502,6 +1516,83 @@ FROM --platform=linux/amd64 golang:1.22
 FROM scratch
 FROM builder AS final
 FROM node:20.11.1@sha256:d938c1761e3afbae9242848ffbb95b9cc1cb0a24d889f8bd955204d347a7266e
+```
+
+```dockerfile
+# testdata/real_world.Dockerfile
+# Patterns sourced from real production codebase
+
+# Pattern: Go multi-stage build (builder → distroless)
+FROM golang:1.26.1-trixie AS builder
+RUN go build -o /app
+FROM gcr.io/distroless/static:01b9ed74ee38468719506f73b50d7bd8e596c37b
+COPY --from=builder /app /app
+
+# Pattern: Node.js with Debian variant
+FROM node:24.14.0-bookworm-slim AS build
+RUN npm ci
+FROM node:24.14.0-bookworm-slim AS runner
+
+# Pattern: Python uv multi-stage (GHCR registry + complex tag)
+FROM ghcr.io/astral-sh/uv:0.10.9-python3.13-trixie AS uv-builder
+RUN uv sync
+FROM python:3.13-slim-trixie AS runtime
+
+# Pattern: tag-less image (implicit :latest)
+FROM ubuntu
+
+# Pattern: latest tag explicitly
+FROM headscale/headscale:latest
+
+# Pattern: specific registry with port
+FROM registry.example.com:5000/myapp:1.0
+
+# Pattern: ECR image
+FROM 123456789012.dkr.ecr.us-east-1.amazonaws.com/myapp:latest
+
+# Pattern: ARG with default for tag only
+ARG PYTHON_TAG=3.12-slim
+FROM python:${PYTHON_TAG} AS deps
+
+# Pattern: ARG for registry (default value)
+ARG REGISTRY=docker.io
+FROM ${REGISTRY}/nginx:1.25
+
+# Pattern: ARG without default (should warn and skip)
+ARG CUSTOM_BASE
+FROM ${CUSTOM_BASE}
+
+# Pattern: digest-only (no tag, already pinned)
+FROM alpine@sha256:abcdef1234567890
+
+# Pattern: PostgreSQL with variant
+FROM postgres:16.6-bookworm
+
+# Pattern: Debian slim for CI
+FROM debian:bookworm-20250407-slim
+
+# Pattern: distroless nonroot variant
+FROM gcr.io/distroless/static-debian12:nonroot
+```
+
+```yaml
+# testdata/docker-compose-realworld.yml
+services:
+  router:
+    image: ghcr.io/apollographql/router:v1.61.12
+  browser:
+    image: ghcr.io/browserless/chromium:v2.38.2
+  proxy:
+    image: caddy:2.7
+  vpn:
+    image: headscale/headscale:latest
+  db:
+    image: postgres:16
+  app:
+    build: .
+    image: myapp:latest
+  pinned:
+    image: node:20.11.1@sha256:d938c1761e3afbae9242848ffbb95b9cc1cb0a24d889f8bd955204d347a7266e
 ```
 
 - [ ] **Step 2: Write end-to-end test for pin (using mock resolver)**
@@ -1689,11 +1780,725 @@ git commit -m "test: add end-to-end tests for pin and check workflows"
 
 ---
 
-### Task 10: Final Cleanup and .gitignore
+### Task 10: Docker Compose Parser
 
 **Files:**
+- Create: `internal/compose/parse.go`
+- Create: `internal/compose/parse_test.go`
+- Create: `testdata/docker-compose.yml`
+
+- [ ] **Step 1: Create test fixture**
+
+```yaml
+# testdata/docker-compose.yml
+services:
+  web:
+    image: node:20.11.1
+    ports:
+      - "3000:3000"
+  db:
+    image: postgres:16.2
+    environment:
+      POSTGRES_PASSWORD: secret
+  worker:
+    image: python:3.12-slim
+  app:
+    build: .
+    image: myapp:latest
+  pinned:
+    image: node:20.11.1@sha256:d938c1761e3afbae9242848ffbb95b9cc1cb0a24d889f8bd955204d347a7266e
+```
+
+- [ ] **Step 2: Write failing tests**
+
+```go
+// internal/compose/parse_test.go
+package compose
+
+import (
+	"testing"
+)
+
+func TestParseCompose_BasicServices(t *testing.T) {
+	input := []byte(`services:
+  web:
+    image: node:20.11.1
+    ports:
+      - "3000:3000"
+  db:
+    image: postgres:16.2
+`)
+	refs, err := Parse(input)
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if len(refs) != 2 {
+		t.Fatalf("expected 2 refs, got %d", len(refs))
+	}
+
+	if refs[0].ServiceName != "web" {
+		t.Errorf("[0] ServiceName = %q, want %q", refs[0].ServiceName, "web")
+	}
+	if refs[0].ImageRef != "node:20.11.1" {
+		t.Errorf("[0] ImageRef = %q, want %q", refs[0].ImageRef, "node:20.11.1")
+	}
+	if refs[0].Digest != "" {
+		t.Errorf("[0] Digest = %q, want empty", refs[0].Digest)
+	}
+
+	if refs[1].ServiceName != "db" {
+		t.Errorf("[1] ServiceName = %q, want %q", refs[1].ServiceName, "db")
+	}
+	if refs[1].ImageRef != "postgres:16.2" {
+		t.Errorf("[1] ImageRef = %q, want %q", refs[1].ImageRef, "postgres:16.2")
+	}
+}
+
+func TestParseCompose_SkipBuild(t *testing.T) {
+	input := []byte(`services:
+  app:
+    build: .
+    image: myapp:latest
+  web:
+    image: node:20
+`)
+	refs, err := Parse(input)
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if len(refs) != 2 {
+		t.Fatalf("expected 2 refs, got %d", len(refs))
+	}
+
+	// app has build: → skipped
+	if !refs[0].Skip {
+		t.Error("[0] service with build should be skipped")
+	}
+	if refs[0].SkipReason != "has build directive" {
+		t.Errorf("[0] SkipReason = %q", refs[0].SkipReason)
+	}
+
+	// web has no build → not skipped
+	if refs[1].Skip {
+		t.Error("[1] service without build should not be skipped")
+	}
+}
+
+func TestParseCompose_AlreadyPinned(t *testing.T) {
+	input := []byte(`services:
+  web:
+    image: node:20.11.1@sha256:abc123
+`)
+	refs, err := Parse(input)
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if len(refs) != 1 {
+		t.Fatalf("expected 1 ref, got %d", len(refs))
+	}
+	if refs[0].ImageRef != "node:20.11.1" {
+		t.Errorf("ImageRef = %q, want %q", refs[0].ImageRef, "node:20.11.1")
+	}
+	if refs[0].Digest != "sha256:abc123" {
+		t.Errorf("Digest = %q, want %q", refs[0].Digest, "sha256:abc123")
+	}
+}
+
+func TestParseCompose_NoImageKey(t *testing.T) {
+	input := []byte(`services:
+  builder:
+    build:
+      context: .
+      dockerfile: Dockerfile
+`)
+	refs, err := Parse(input)
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if len(refs) != 0 {
+		t.Errorf("expected 0 refs for build-only service, got %d", len(refs))
+	}
+}
+```
+
+- [ ] **Step 3: Run tests to verify they fail**
+
+Run: `go test ./internal/compose/ -v`
+Expected: compilation error — `Parse` not defined
+
+- [ ] **Step 4: Implement compose parser**
+
+```go
+// internal/compose/parse.go
+package compose
+
+import (
+	"fmt"
+	"strings"
+
+	"gopkg.in/yaml.v3"
+)
+
+// ComposeImageRef represents an image reference in a docker-compose.yml file.
+type ComposeImageRef struct {
+	ServiceName string
+	ImageRef    string // Image reference without digest (e.g., "node:20.11.1")
+	RawRef      string // Image reference as written (e.g., "node:20.11.1@sha256:abc...")
+	Digest      string // Existing digest if present
+	Line        int    // 1-based line number of the image: value
+	Skip        bool
+	SkipReason  string
+}
+
+// Parse reads a docker-compose.yml and returns image references from services.
+func Parse(content []byte) ([]ComposeImageRef, error) {
+	var doc yaml.Node
+	if err := yaml.Unmarshal(content, &doc); err != nil {
+		return nil, fmt.Errorf("parsing YAML: %w", err)
+	}
+
+	if doc.Kind != yaml.DocumentNode || len(doc.Content) == 0 {
+		return nil, fmt.Errorf("invalid YAML document")
+	}
+
+	root := doc.Content[0]
+	if root.Kind != yaml.MappingNode {
+		return nil, fmt.Errorf("expected mapping at root")
+	}
+
+	// Find "services" key
+	servicesNode := findMapValue(root, "services")
+	if servicesNode == nil {
+		return nil, nil
+	}
+	if servicesNode.Kind != yaml.MappingNode {
+		return nil, fmt.Errorf("services must be a mapping")
+	}
+
+	var refs []ComposeImageRef
+
+	// Iterate service entries (key-value pairs)
+	for i := 0; i+1 < len(servicesNode.Content); i += 2 {
+		serviceKey := servicesNode.Content[i]
+		serviceVal := servicesNode.Content[i+1]
+
+		if serviceVal.Kind != yaml.MappingNode {
+			continue
+		}
+
+		serviceName := serviceKey.Value
+
+		// Check for image: key
+		imageNode := findMapValue(serviceVal, "image")
+		if imageNode == nil {
+			continue
+		}
+
+		// Check for build: key
+		hasBuild := findMapValue(serviceVal, "build") != nil
+
+		rawRef := imageNode.Value
+		ref := ComposeImageRef{
+			ServiceName: serviceName,
+			RawRef:      rawRef,
+			Line:        imageNode.Line,
+		}
+
+		if hasBuild {
+			ref.ImageRef = rawRef
+			ref.Skip = true
+			ref.SkipReason = "has build directive"
+			refs = append(refs, ref)
+			continue
+		}
+
+		// Split digest from image ref
+		if atIdx := strings.Index(rawRef, "@"); atIdx >= 0 {
+			ref.ImageRef = rawRef[:atIdx]
+			ref.Digest = rawRef[atIdx+1:]
+		} else {
+			ref.ImageRef = rawRef
+		}
+
+		refs = append(refs, ref)
+	}
+
+	return refs, nil
+}
+
+func findMapValue(node *yaml.Node, key string) *yaml.Node {
+	if node.Kind != yaml.MappingNode {
+		return nil
+	}
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		if node.Content[i].Value == key {
+			return node.Content[i+1]
+		}
+	}
+	return nil
+}
+```
+
+- [ ] **Step 5: Run tests to verify they pass**
+
+Run: `go test ./internal/compose/ -v`
+Expected: all PASS
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add internal/compose/parse.go internal/compose/parse_test.go testdata/docker-compose.yml
+git commit -m "feat: implement docker-compose.yml parser"
+```
+
+---
+
+### Task 11: Docker Compose Rewriter
+
+**Files:**
+- Create: `internal/compose/rewrite.go`
+- Create: `internal/compose/rewrite_test.go`
+
+- [ ] **Step 1: Write failing tests**
+
+```go
+// internal/compose/rewrite_test.go
+package compose
+
+import (
+	"testing"
+)
+
+func TestRewriteCompose(t *testing.T) {
+	input := `services:
+  web:
+    image: node:20.11.1
+    ports:
+      - "3000:3000"
+  db:
+    image: postgres:16.2
+    environment:
+      POSTGRES_PASSWORD: secret
+  app:
+    build: .
+    image: myapp:latest
+`
+	refs := []ComposeImageRef{
+		{ServiceName: "web", ImageRef: "node:20.11.1", RawRef: "node:20.11.1", Line: 3},
+		{ServiceName: "db", ImageRef: "postgres:16.2", RawRef: "postgres:16.2", Line: 6},
+		{ServiceName: "app", ImageRef: "myapp:latest", RawRef: "myapp:latest", Line: 11, Skip: true, SkipReason: "has build directive"},
+	}
+	digests := map[int]string{
+		0: "sha256:aaa111",
+		1: "sha256:bbb222",
+	}
+
+	got := RewriteFile(input, refs, digests)
+
+	if !containsLine(got, "    image: node:20.11.1@sha256:aaa111") {
+		t.Errorf("expected node image to be pinned, got:\n%s", got)
+	}
+	if !containsLine(got, "    image: postgres:16.2@sha256:bbb222") {
+		t.Errorf("expected postgres image to be pinned, got:\n%s", got)
+	}
+	if !containsLine(got, "    image: myapp:latest") {
+		t.Errorf("expected myapp to NOT be pinned (has build), got:\n%s", got)
+	}
+}
+
+func TestRewriteCompose_UpdateExisting(t *testing.T) {
+	input := `services:
+  web:
+    image: node:20.11.1@sha256:olddigest
+`
+	refs := []ComposeImageRef{
+		{ServiceName: "web", ImageRef: "node:20.11.1", RawRef: "node:20.11.1@sha256:olddigest", Digest: "sha256:olddigest", Line: 3},
+	}
+	digests := map[int]string{
+		0: "sha256:newdigest",
+	}
+
+	got := RewriteFile(input, refs, digests)
+
+	if !containsLine(got, "    image: node:20.11.1@sha256:newdigest") {
+		t.Errorf("expected digest to be updated, got:\n%s", got)
+	}
+}
+
+func containsLine(s, line string) bool {
+	for _, l := range splitLines(s) {
+		if l == line {
+			return true
+		}
+	}
+	return false
+}
+
+func splitLines(s string) []string {
+	lines := []string{}
+	start := 0
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\n' {
+			lines = append(lines, s[start:i])
+			start = i + 1
+		}
+	}
+	if start < len(s) {
+		lines = append(lines, s[start:])
+	}
+	return lines
+}
+```
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run: `go test ./internal/compose/ -v -run TestRewrite`
+Expected: compilation error — `RewriteFile` not defined
+
+- [ ] **Step 3: Implement RewriteFile for compose**
+
+```go
+// internal/compose/rewrite.go
+package compose
+
+import (
+	"strings"
+)
+
+// RewriteFile applies digest pins to a docker-compose.yml content.
+// digests maps ref index to digest string.
+// Refs marked as Skip are ignored even if present in digests.
+func RewriteFile(content string, refs []ComposeImageRef, digests map[int]string) string {
+	lines := strings.Split(content, "\n")
+
+	for i, ref := range refs {
+		digest, ok := digests[i]
+		if !ok || ref.Skip {
+			continue
+		}
+		lineIdx := ref.Line - 1
+		if lineIdx >= 0 && lineIdx < len(lines) {
+			oldValue := ref.RawRef
+			var newValue string
+			if atIdx := strings.Index(oldValue, "@"); atIdx >= 0 {
+				// Replace existing digest
+				newValue = oldValue[:atIdx] + "@" + digest
+			} else {
+				// Append digest
+				newValue = oldValue + "@" + digest
+			}
+			lines[lineIdx] = strings.Replace(lines[lineIdx], oldValue, newValue, 1)
+		}
+	}
+
+	return strings.Join(lines, "\n")
+}
+```
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+Run: `go test ./internal/compose/ -v -run TestRewrite`
+Expected: all PASS
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add internal/compose/rewrite.go internal/compose/rewrite_test.go
+git commit -m "feat: implement docker-compose.yml rewriter"
+```
+
+---
+
+### Task 12: Integrate Compose into Pin and Check Commands
+
+**Files:**
+- Modify: `cmd/pin.go`
+- Modify: `cmd/check.go`
+- Modify: `cmd/files.go`
+
+- [ ] **Step 1: Add file type detection to files.go**
+
+Add to `cmd/files.go`:
+
+```go
+// FileType determines whether a file is a Dockerfile or compose file.
+type FileType int
+
+const (
+	FileTypeDockerfile FileType = iota
+	FileTypeCompose
+)
+
+// DetectFileType returns the type of a file based on its name.
+func DetectFileType(path string) FileType {
+	base := filepath.Base(path)
+	lower := strings.ToLower(base)
+	if strings.HasSuffix(lower, ".yml") || strings.HasSuffix(lower, ".yaml") {
+		return FileTypeCompose
+	}
+	return FileTypeDockerfile
+}
+```
+
+Add these imports to `cmd/files.go`:
+```go
+import (
+	"path/filepath"
+	"strings"
+)
+```
+
+- [ ] **Step 2: Update pin.go to handle compose files**
+
+Add to the `runPin` function, replacing the loop body:
+
+```go
+func runPin(cmd *cobra.Command, args []string) error {
+	files, err := FindFiles(pinFile, pinGlob)
+	if err != nil {
+		return err
+	}
+
+	ctx := context.Background()
+	res := &resolver.CraneResolver{}
+	hasChanges := false
+
+	for _, filePath := range files {
+		var changed bool
+		var err error
+		switch DetectFileType(filePath) {
+		case FileTypeCompose:
+			changed, err = pinComposeFile(ctx, filePath, res, pinDryRun, pinUpdate)
+		default:
+			changed, err = pinDockerfile(ctx, filePath, res, pinDryRun, pinUpdate)
+		}
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error processing %s: %v\n", filePath, err)
+			continue
+		}
+		if changed {
+			hasChanges = true
+		}
+	}
+
+	if pinDryRun && hasChanges {
+		return nil
+	}
+	return nil
+}
+```
+
+Rename `pinFile_` to `pinDockerfile` and add `pinComposeFile`:
+
+```go
+func pinComposeFile(ctx context.Context, filePath string, res resolver.DigestResolver, dryRun bool, update bool) (bool, error) {
+	content, err := os.ReadFile(filePath)
+	if err != nil {
+		return false, fmt.Errorf("reading %s: %w", filePath, err)
+	}
+
+	refs, err := compose.Parse(content)
+	if err != nil {
+		return false, fmt.Errorf("parsing %s: %w", filePath, err)
+	}
+
+	digests := make(map[int]string)
+	for i, ref := range refs {
+		if ref.Skip {
+			if ref.SkipReason != "" {
+				fmt.Fprintf(os.Stderr, "SKIP  %s:%d  %s  %s\n", filePath, ref.Line, ref.RawRef, ref.SkipReason)
+			}
+			continue
+		}
+		if ref.Digest != "" && !update {
+			continue
+		}
+
+		digest, err := res.Resolve(ctx, ref.ImageRef)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "WARN  %s:%d  %s  failed to resolve: %v\n", filePath, ref.Line, ref.RawRef, err)
+			continue
+		}
+		digests[i] = digest
+	}
+
+	if len(digests) == 0 {
+		return false, nil
+	}
+
+	result := compose.RewriteFile(string(content), refs, digests)
+
+	if dryRun {
+		fmt.Printf("--- %s\n", filePath)
+		fmt.Println(result)
+		return true, nil
+	}
+
+	if err := os.WriteFile(filePath, []byte(result), 0644); err != nil {
+		return false, fmt.Errorf("writing %s: %w", filePath, err)
+	}
+	fmt.Printf("pinned %d image(s) in %s\n", len(digests), filePath)
+	return true, nil
+}
+```
+
+Add import `"github.com/azu/dockerfile-pin/internal/compose"` to pin.go.
+
+- [ ] **Step 3: Update check.go to handle compose files**
+
+Add to the `runCheck` function, replacing the loop body:
+
+```go
+	for _, filePath := range files {
+		var fileResults []CheckResult
+		var err error
+		switch DetectFileType(filePath) {
+		case FileTypeCompose:
+			fileResults, err = checkComposeFile(ctx, filePath, res, checkSyntaxOnly, checkIgnore)
+		default:
+			fileResults, err = checkFile_(ctx, filePath, res, checkSyntaxOnly, checkIgnore)
+		}
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error processing %s: %v\n", filePath, err)
+			continue
+		}
+		results = append(results, fileResults...)
+		for _, r := range fileResults {
+			if r.Status == "fail" {
+				hasFail = true
+			}
+		}
+	}
+```
+
+Add `checkComposeFile`:
+
+```go
+func checkComposeFile(ctx context.Context, filePath string, res resolver.DigestResolver, syntaxOnly bool, ignoreImages []string) ([]CheckResult, error) {
+	content, err := os.ReadFile(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("reading %s: %w", filePath, err)
+	}
+
+	refs, err := compose.Parse(content)
+	if err != nil {
+		return nil, fmt.Errorf("parsing %s: %w", filePath, err)
+	}
+
+	var results []CheckResult
+
+	for _, ref := range refs {
+		if ref.Skip {
+			results = append(results, CheckResult{
+				File:     filePath,
+				Line:     ref.Line,
+				Image:    ref.ImageRef,
+				Status:   "skip",
+				Message:  ref.SkipReason,
+				Original: "image: " + ref.RawRef,
+			})
+			continue
+		}
+
+		if isIgnored(ref.ImageRef, ignoreImages) {
+			results = append(results, CheckResult{
+				File:     filePath,
+				Line:     ref.Line,
+				Image:    ref.ImageRef,
+				Status:   "skip",
+				Message:  "ignored",
+				Original: "image: " + ref.RawRef,
+			})
+			continue
+		}
+
+		if ref.Digest == "" {
+			results = append(results, CheckResult{
+				File:     filePath,
+				Line:     ref.Line,
+				Image:    ref.ImageRef,
+				Status:   "fail",
+				Message:  "missing digest",
+				Original: "image: " + ref.RawRef,
+			})
+			continue
+		}
+
+		if syntaxOnly {
+			results = append(results, CheckResult{
+				File:     filePath,
+				Line:     ref.Line,
+				Image:    ref.ImageRef,
+				Status:   "ok",
+				Message:  "",
+				Original: "image: " + ref.RawRef,
+			})
+			continue
+		}
+
+		fullRef := ref.ImageRef + "@" + ref.Digest
+		exists, err := res.Exists(ctx, fullRef)
+		if err != nil {
+			results = append(results, CheckResult{
+				File:     filePath,
+				Line:     ref.Line,
+				Image:    ref.ImageRef,
+				Status:   "warn",
+				Message:  fmt.Sprintf("registry check failed: %v", err),
+				Original: "image: " + ref.RawRef,
+			})
+			continue
+		}
+		if !exists {
+			results = append(results, CheckResult{
+				File:     filePath,
+				Line:     ref.Line,
+				Image:    ref.ImageRef,
+				Status:   "fail",
+				Message:  "digest not found in registry",
+				Original: "image: " + ref.RawRef,
+			})
+			continue
+		}
+
+		results = append(results, CheckResult{
+			File:     filePath,
+			Line:     ref.Line,
+			Image:    ref.ImageRef,
+			Status:   "ok",
+			Message:  "",
+			Original: "image: " + ref.RawRef,
+		})
+	}
+
+	return results, nil
+}
+```
+
+Add import `"github.com/azu/dockerfile-pin/internal/compose"` to check.go.
+
+- [ ] **Step 4: Verify build**
+
+Run: `go build ./...`
+Expected: no errors
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add cmd/pin.go cmd/check.go cmd/files.go
+git commit -m "feat: add docker-compose.yml support to pin and check commands"
+```
+
+---
+
+### Task 13: CI, Linting, and Release Configuration
+
+**Files:**
+- Create: `.golangci.yml`
+- Create: `.github/workflows/ci.yml`
+- Create: `.github/workflows/release.yml`
+- Create: `.goreleaser.yml`
 - Create: `.gitignore`
-- Modify: `cmd/root.go` (add version flag)
 
 - [ ] **Step 1: Create .gitignore**
 
@@ -1703,7 +2508,148 @@ git commit -m "test: add end-to-end tests for pin and check workflows"
 dist/
 ```
 
-- [ ] **Step 2: Add version info to root command**
+- [ ] **Step 2: Create golangci-lint config**
+
+```yaml
+# .golangci.yml
+linters:
+  enable:
+    - errcheck
+    - govet
+    - staticcheck
+    - unused
+    - gosimple
+    - ineffassign
+    - typecheck
+    - gofmt
+    - goimports
+    - misspell
+    - revive
+
+linters-settings:
+  revive:
+    rules:
+      - name: exported
+        disabled: true
+
+run:
+  timeout: 5m
+```
+
+- [ ] **Step 3: Create CI workflow**
+
+```yaml
+# .github/workflows/ci.yml
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version-file: go.mod
+      - run: go test ./... -v -race -coverprofile=coverage.out
+      - run: go build ./...
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version-file: go.mod
+      - uses: golangci/golangci-lint-action@4afd733a84b1f43292c63897423277bb7f4313a9 # v6.5.0
+        with:
+          version: latest
+```
+
+- [ ] **Step 4: Create release workflow**
+
+```yaml
+# .github/workflows/release.yml
+name: Release
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version-file: go.mod
+      - uses: goreleaser/goreleaser-action@9ed2f89a662bf1735a48bc8557fd212fa902bebf # v6.2.1
+        with:
+          version: latest
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+```
+
+- [ ] **Step 5: Create goreleaser config**
+
+```yaml
+# .goreleaser.yml
+version: 2
+builds:
+  - env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X github.com/azu/dockerfile-pin/cmd.version={{.Version}}
+
+archives:
+  - format: tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
+    format_overrides:
+      - goos: windows
+        format: zip
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  sort: asc
+```
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add .gitignore .golangci.yml .goreleaser.yml .github/
+git commit -m "chore: add CI, linting, and release configuration"
+```
+
+---
+
+### Task 14: Final Cleanup and Version Command
+
+**Files:**
+- Modify: `cmd/root.go` (add version flag)
+
+- [ ] **Step 1: Add version info to root command**
 
 Update `cmd/root.go`:
 
@@ -1721,8 +2667,8 @@ var version = "dev"
 
 var rootCmd = &cobra.Command{
 	Use:   "dockerfile-pin",
-	Short: "Pin Dockerfile images to digests",
-	Long:  "A CLI tool that adds @sha256:<digest> to FROM lines in Dockerfiles to prevent supply chain attacks.",
+	Short: "Pin Dockerfile and docker-compose images to digests",
+	Long:  "A CLI tool that adds @sha256:<digest> to FROM lines in Dockerfiles and image fields in docker-compose.yml to prevent supply chain attacks.",
 }
 
 var versionCmd = &cobra.Command{
@@ -1742,12 +2688,15 @@ func Execute() error {
 }
 ```
 
-- [ ] **Step 3: Run full test suite**
+- [ ] **Step 2: Run full test suite and lint**
 
-Run: `go test ./... -v`
+Run:
+```bash
+go test ./... -v -race
+```
 Expected: all PASS
 
-- [ ] **Step 4: Build and verify CLI**
+- [ ] **Step 3: Build and verify CLI**
 
 Run:
 ```bash
@@ -1758,11 +2707,11 @@ go build -o dockerfile-pin .
 ./dockerfile-pin version
 ```
 
-Expected: help text and version output displayed correctly
+Expected: help text mentions docker-compose, version output displayed correctly
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
-git add .gitignore cmd/root.go
-git commit -m "chore: add .gitignore and version command"
+git add cmd/root.go
+git commit -m "chore: add version command and update descriptions"
 ```
