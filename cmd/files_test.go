@@ -10,7 +10,9 @@ import (
 func TestFindFiles_SingleFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "Dockerfile")
-	os.WriteFile(path, []byte("FROM node:20"), 0644)
+	if err := os.WriteFile(path, []byte("FROM node:20"), 0644); err != nil {
+		t.Fatal(err)
+	}
 	files, err := FindFiles(path, "")
 	if err != nil {
 		t.Fatalf("FindFiles() error = %v", err)
@@ -23,10 +25,18 @@ func TestFindFiles_SingleFile(t *testing.T) {
 func TestFindFiles_GlobPattern(t *testing.T) {
 	dir := t.TempDir()
 	sub := filepath.Join(dir, "services", "api")
-	os.MkdirAll(sub, 0755)
-	os.WriteFile(filepath.Join(dir, "Dockerfile"), []byte("FROM node:20"), 0644)
-	os.WriteFile(filepath.Join(sub, "Dockerfile"), []byte("FROM python:3"), 0644)
-	os.WriteFile(filepath.Join(sub, "Dockerfile.dev"), []byte("FROM python:3"), 0644)
+	if err := os.MkdirAll(sub, 0755); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{
+		filepath.Join(dir, "Dockerfile"),
+		filepath.Join(sub, "Dockerfile"),
+		filepath.Join(sub, "Dockerfile.dev"),
+	} {
+		if err := os.WriteFile(p, []byte("FROM node:20"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
 	files, err := FindFiles("", filepath.Join(dir, "**", "Dockerfile*"))
 	if err != nil {
 		t.Fatalf("FindFiles() error = %v", err)
@@ -39,10 +49,17 @@ func TestFindFiles_GlobPattern(t *testing.T) {
 
 func TestFindFiles_DefaultFile(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "Dockerfile"), []byte("FROM node:20"), 0644)
-	origDir, _ := os.Getwd()
-	os.Chdir(dir)
-	defer os.Chdir(origDir)
+	if err := os.WriteFile(filepath.Join(dir, "Dockerfile"), []byte("FROM node:20"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chdir(origDir) }()
 	files, err := FindFiles("", "")
 	if err != nil {
 		t.Fatalf("FindFiles() error = %v", err)

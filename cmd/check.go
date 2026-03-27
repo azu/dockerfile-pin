@@ -84,7 +84,7 @@ func runCheck(cmd *cobra.Command, args []string) error {
 	case "json":
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
-		enc.Encode(results)
+		_ = enc.Encode(results)
 	default:
 		for _, r := range results {
 			var prefix string

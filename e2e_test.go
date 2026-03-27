@@ -123,7 +123,9 @@ func TestPinFileRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "Dockerfile")
 	content := "FROM alpine:3.19\nRUN echo hello\n"
-	os.WriteFile(path, []byte(content), 0644)
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	instructions, err := dockerfile.Parse(strings.NewReader(content))
 	if err != nil {
@@ -133,8 +135,13 @@ func TestPinFileRoundTrip(t *testing.T) {
 	digests := map[int]string{0: "sha256:testdigest123"}
 	result := dockerfile.RewriteFile(content, instructions, digests)
 
-	os.WriteFile(path, []byte(result), 0644)
-	written, _ := os.ReadFile(path)
+	if err := os.WriteFile(path, []byte(result), 0644); err != nil {
+		t.Fatal(err)
+	}
+	written, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	if !strings.Contains(string(written), "FROM alpine:3.19@sha256:testdigest123") {
 		t.Errorf("round-trip failed: %s", string(written))
