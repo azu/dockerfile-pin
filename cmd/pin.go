@@ -26,7 +26,6 @@ var (
 	runWrite    bool
 	runUpdate   bool
 	runPlatform string
-	runVerbose  bool
 )
 
 func init() {
@@ -35,7 +34,6 @@ func init() {
 	runCmd.Flags().BoolVar(&runWrite, "write", false, "Write changes to files (default is dry-run)")
 	runCmd.Flags().BoolVar(&runUpdate, "update", false, "Update existing digests")
 	runCmd.Flags().StringVar(&runPlatform, "platform", "", "Platform for multi-arch images (e.g., linux/amd64)")
-	runCmd.Flags().BoolVarP(&runVerbose, "verbose", "v", false, "Show progress details")
 	rootCmd.AddCommand(runCmd)
 }
 
@@ -50,13 +48,9 @@ func runRun(cmd *cobra.Command, args []string) error {
 	defer cancel()
 	res := &resolver.CraneResolver{}
 
-	if runVerbose {
-		fmt.Fprintf(os.Stderr, "found %d file(s)\n", len(files))
-	}
+	fmt.Printf("found %d file(s)\n", len(files))
 	for i, filePath := range files {
-		if runVerbose {
-			fmt.Fprintf(os.Stderr, "[%d/%d] %s\n", i+1, len(files), filePath)
-		}
+		fmt.Printf("[%d/%d] %s\n", i+1, len(files), filePath)
 		var err error
 		switch DetectFileType(filePath) {
 		case FileTypeCompose:
