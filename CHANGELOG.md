@@ -3,6 +3,11 @@
 ## [v1.0.1](https://github.com/azu/dockerfile-pin/compare/v1.0.0...v1.0.1) - 2026-03-27
 ### Other Changes
 - Release for v1.0.1 by @github-actions[bot] in https://github.com/azu/dockerfile-pin/pull/11
+- Release for v1.0.1 by @github-actions[bot] in https://github.com/azu/dockerfile-pin/pull/12
+
+## [v1.0.1](https://github.com/azu/dockerfile-pin/compare/v1.0.0...v1.0.1) - 2026-03-27
+### Other Changes
+- Release for v1.0.1 by @github-actions[bot] in https://github.com/azu/dockerfile-pin/pull/11
 
 ## [v1.0.1](https://github.com/azu/dockerfile-pin/compare/v1.0.0...v1.0.1) - 2026-03-27
 
