@@ -62,6 +62,9 @@ dockerfile-pin run -f path/to/Dockerfile
 # Preview multiple files using glob
 dockerfile-pin run --glob '**/Dockerfile*'
 
+# Multiple patterns with brace expansion
+dockerfile-pin run --glob '**/{Dockerfile,Dockerfile.*,docker-compose.yml,compose.yaml}'
+
 # Preview docker-compose.yml
 dockerfile-pin run -f docker-compose.yml
 
@@ -98,6 +101,9 @@ dockerfile-pin check -f Dockerfile
 
 # Check multiple files
 dockerfile-pin check --glob '**/Dockerfile*'
+
+# Multiple patterns with brace expansion
+dockerfile-pin check --glob '**/{Dockerfile,Dockerfile.*,dockerfile_*.tmpl,docker-compose.yml,compose.yaml}'
 
 # Syntax check only (no registry queries)
 dockerfile-pin check --syntax-only
@@ -186,7 +192,9 @@ jobs:
 ```
 
 `dockerfile-pin check` exits with code 1 if any image is missing a digest.
-By default, it auto-detects all Dockerfiles and compose files in the repository (using `git ls-files`).
+
+When `-f` and `--glob` are omitted, it auto-detects target files in the repository using `git ls-files`.
+Default targets: `Dockerfile`, `Dockerfile.*`, `docker-compose*.yml`, `docker-compose*.yaml`, `compose.yml`, `compose.yaml`
 
 ### Pin (migration)
 
