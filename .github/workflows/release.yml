@@ -27,12 +27,12 @@ jobs:
         env:
           HEAD_REF: ${{ github.event.pull_request.head.ref }}
         run: |
-          # Branch name is "release/vX.Y.Z"
-          VERSION=$(echo "$HEAD_REF" | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+')
-          if [ -z "$VERSION" ]; then
-            echo "::error::Could not extract version from branch: $HEAD_REF"
+          # Branch name must be "release/vX.Y.Z"
+          if [[ ! "$HEAD_REF" =~ ^release/v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Invalid release branch name: $HEAD_REF"
             exit 1
           fi
+          VERSION=$(echo "$HEAD_REF" | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+')
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Check if tag already exists (immutable release)
