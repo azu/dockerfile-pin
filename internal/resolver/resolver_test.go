@@ -70,16 +70,16 @@ func TestCachedResolver_Exists_DeduplicatesCalls(t *testing.T) {
 
 	// Simulate a real-world scenario: same image appears in multiple Dockerfiles
 	refs := []string{
-		"node:20@sha256:abc",      // Dockerfile 1
-		"python:3.12@sha256:x",    // Dockerfile 2
-		"node:20@sha256:abc",      // Dockerfile 3 (duplicate)
-		"node:20@sha256:abc",      // Dockerfile 4 (duplicate)
-		"python:3.12@sha256:x",    // Dockerfile 5 (duplicate)
-		"gone:1@sha256:nope",      // Dockerfile 6 (non-existent)
-		"gone:1@sha256:nope",      // Dockerfile 7 (non-existent, duplicate)
+		"node:20@sha256:abc",   // Dockerfile 1
+		"python:3.12@sha256:x", // Dockerfile 2
+		"node:20@sha256:abc",   // Dockerfile 3 (duplicate)
+		"node:20@sha256:abc",   // Dockerfile 4 (duplicate)
+		"python:3.12@sha256:x", // Dockerfile 5 (duplicate)
+		"gone:1@sha256:nope",   // Dockerfile 6 (non-existent)
+		"gone:1@sha256:nope",   // Dockerfile 7 (non-existent, duplicate)
 	}
 	for _, ref := range refs {
-		cached.Exists(ctx, ref)
+		_, _ = cached.Exists(ctx, ref)
 	}
 
 	// 3 unique refs → inner should be called exactly 3 times
