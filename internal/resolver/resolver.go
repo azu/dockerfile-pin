@@ -49,28 +49,36 @@ func (r *CraneResolver) Exists(ctx context.Context, imageRef string) (bool, erro
 }
 
 // CachedResolver wraps a DigestResolver with an in-memory cache.
+// Resolve and Exists use separate caches to avoid cross-method interference.
 // Safe for concurrent use.
 type CachedResolver struct {
-	inner DigestResolver
-	mu    sync.RWMutex
-	cache map[string]cacheEntry
+	inner        DigestResolver
+	mu           sync.RWMutex
+	resolveCache map[string]resolveEntry
+	existsCache  map[string]existsEntry
 }
 
-type cacheEntry struct {
+type resolveEntry struct {
 	digest string
+	err    error
+}
+
+type existsEntry struct {
+	exists bool
 	err    error
 }
 
 func NewCachedResolver(inner DigestResolver) *CachedResolver {
 	return &CachedResolver{
-		inner: inner,
-		cache: make(map[string]cacheEntry),
+		inner:        inner,
+		resolveCache: make(map[string]resolveEntry),
+		existsCache:  make(map[string]existsEntry),
 	}
 }
 
 func (r *CachedResolver) Resolve(ctx context.Context, imageRef string) (string, error) {
 	r.mu.RLock()
-	entry, ok := r.cache[imageRef]
+	entry, ok := r.resolveCache[imageRef]
 	r.mu.RUnlock()
 	if ok {
 		return entry.digest, entry.err
@@ -79,14 +87,27 @@ func (r *CachedResolver) Resolve(ctx context.Context, imageRef string) (string, 
 	digest, err := r.inner.Resolve(ctx, imageRef)
 
 	r.mu.Lock()
-	r.cache[imageRef] = cacheEntry{digest: digest, err: err}
+	r.resolveCache[imageRef] = resolveEntry{digest: digest, err: err}
 	r.mu.Unlock()
 
 	return digest, err
 }
 
 func (r *CachedResolver) Exists(ctx context.Context, imageRef string) (bool, error) {
-	return r.inner.Exists(ctx, imageRef)
+	r.mu.RLock()
+	entry, ok := r.existsCache[imageRef]
+	r.mu.RUnlock()
+	if ok {
+		return entry.exists, entry.err
+	}
+
+	exists, err := r.inner.Exists(ctx, imageRef)
+
+	r.mu.Lock()
+	r.existsCache[imageRef] = existsEntry{exists: exists, err: err}
+	r.mu.Unlock()
+
+	return exists, err
 }
 
 type MockResolver struct {

@@ -193,8 +193,10 @@ jobs:
 
 `dockerfile-pin check` exits with code 1 if any image is missing a digest.
 
-When `-f` and `--glob` are omitted, it auto-detects target files in the repository using `git ls-files`.
-Default targets: `Dockerfile`, `Dockerfile.*`, `docker-compose*.yml`, `docker-compose*.yaml`, `compose.yml`, `compose.yaml`
+When `-f` and `--glob` are omitted, it auto-detects target files using `git ls-files` filtered by the default glob pattern:
+`**/{Dockerfile,Dockerfile.*,docker-compose*.yml,docker-compose*.yaml,compose.yml,compose.yaml}`
+
+Outside a git repository, it falls back to the same glob pattern with common directories (`node_modules`, `vendor`) excluded.
 
 ### Pin (migration)
 

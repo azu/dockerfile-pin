@@ -110,7 +110,7 @@ func TestFindFiles_DefaultRecursive(t *testing.T) {
 
 func TestFindFiles_RespectsGitignore(t *testing.T) {
 	dir := t.TempDir()
-	ignored := filepath.Join(dir, "build")
+	ignored := filepath.Join(dir, "node_modules", "pkg")
 	if err := os.MkdirAll(ignored, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -120,7 +120,7 @@ func TestFindFiles_RespectsGitignore(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(ignored, "Dockerfile"), []byte("FROM node:20"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte("build/\n"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte("node_modules/\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	initGitRepo(t, dir)
@@ -138,6 +138,6 @@ func TestFindFiles_RespectsGitignore(t *testing.T) {
 		t.Fatalf("FindFiles() error = %v", err)
 	}
 	if len(files) != 1 {
-		t.Errorf("FindFiles() returned %d files, want 1 (.gitignored should be excluded): %v", len(files), files)
+		t.Errorf("FindFiles() returned %d files, want 1 (node_modules should be excluded): %v", len(files), files)
 	}
 }
