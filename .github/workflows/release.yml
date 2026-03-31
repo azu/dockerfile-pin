@@ -25,20 +25,23 @@ jobs:
 
       - name: Extract version from PR title
         id: version
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
         run: |
-          TITLE="${{ github.event.pull_request.title }}"
-          VERSION=$(echo "$TITLE" | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+')
+          VERSION=$(echo "$PR_TITLE" | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+')
           if [ -z "$VERSION" ]; then
-            echo "::error::Could not extract version from PR title: $TITLE"
+            echo "::error::Could not extract version from PR title: $PR_TITLE"
             exit 1
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Check if tag already exists (immutable release)
         id: check_tag
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
-          if git rev-parse "${{ steps.version.outputs.version }}" >/dev/null 2>&1; then
-            echo "::warning::Tag ${{ steps.version.outputs.version }} already exists, skipping release"
+          if git rev-parse "$VERSION" >/dev/null 2>&1; then
+            echo "::warning::Tag $VERSION already exists, skipping release"
             echo "exists=true" >> "$GITHUB_OUTPUT"
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
@@ -47,11 +50,12 @@ jobs:
       - name: Create tag
         id: tag
         if: steps.check_tag.outputs.exists == 'false'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
-          TAG="${{ steps.version.outputs.version }}"
-          git tag "$TAG"
-          git push origin "$TAG"
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          git tag "$VERSION"
+          git push origin "$VERSION"
+          echo "tag=$VERSION" >> "$GITHUB_OUTPUT"
 
       - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
         if: steps.check_tag.outputs.exists == 'false'
@@ -80,9 +84,12 @@ jobs:
         if: steps.check_tag.outputs.exists == 'false'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          VERSION: ${{ steps.version.outputs.version }}
+          REPO: ${{ github.repository }}
         run: |
-          gh pr comment "${{ github.event.pull_request.number }}" \
-            --body "Released as [${{ steps.version.outputs.version }}](https://github.com/${{ github.repository }}/releases/tag/${{ steps.version.outputs.version }})"
+          gh pr comment "$PR_NUMBER" \
+            --body "Released as [${VERSION}](https://github.com/${REPO}/releases/tag/${VERSION})"
 
   provenance:
     needs: release
