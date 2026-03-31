@@ -19,14 +19,15 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Extract version from PR title
+      - name: Extract version from branch name
         id: version
         env:
-          PR_TITLE: ${{ github.event.pull_request.title }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
         run: |
-          VERSION=$(echo "$PR_TITLE" | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+')
+          # Branch name is "release/vX.Y.Z"
+          VERSION=$(echo "$HEAD_REF" | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+')
           if [ -z "$VERSION" ]; then
-            echo "::error::Could not extract version from PR title: $PR_TITLE"
+            echo "::error::Could not extract version from branch: $HEAD_REF"
             exit 1
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
