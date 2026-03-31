@@ -19,6 +19,7 @@ var runCmd = &cobra.Command{
 	Use:   "run",
 	Short: "Pin FROM images to their digests",
 	Long:  "Parse Dockerfile FROM lines and add @sha256:<digest> to each image reference.\nBy default, shows changes without writing files (dry-run). Use --write to apply changes.",
+	Args:  cobra.NoArgs,
 	RunE:  runRun,
 }
 

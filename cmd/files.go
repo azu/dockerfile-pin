@@ -3,7 +3,6 @@ package cmd
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -26,22 +25,8 @@ func DetectFileType(path string) FileType {
 	return FileTypeDockerfile
 }
 
-func isTargetFile(name string) bool {
-	lower := strings.ToLower(name)
-	if lower == "dockerfile" {
-		return true
-	}
-	if strings.HasPrefix(lower, "dockerfile.") && !strings.HasSuffix(lower, ".go") && !strings.HasSuffix(lower, ".md") {
-		return true
-	}
-	if strings.HasPrefix(lower, "docker-compose") && (strings.HasSuffix(lower, ".yml") || strings.HasSuffix(lower, ".yaml")) {
-		return true
-	}
-	if lower == "compose.yml" || lower == "compose.yaml" {
-		return true
-	}
-	return false
-}
+// defaultGlob is used when neither -f nor --glob is specified.
+const defaultGlob = "**/{Dockerfile,Dockerfile.*,dockerfile_*.tmpl,docker-compose.yml,docker-compose.yaml,compose.yml,compose.yaml}"
 
 func FindFiles(filePath string, globPattern string) ([]string, error) {
 	if filePath != "" {
@@ -50,38 +35,15 @@ func FindFiles(filePath string, globPattern string) ([]string, error) {
 		}
 		return []string{filePath}, nil
 	}
-	if globPattern != "" {
-		matches, err := doublestar.FilepathGlob(globPattern)
-		if err != nil {
-			return nil, fmt.Errorf("invalid glob pattern: %w", err)
-		}
-		if len(matches) == 0 {
-			return nil, fmt.Errorf("no files matched pattern: %s", globPattern)
-		}
-		return matches, nil
+	if globPattern == "" {
+		globPattern = defaultGlob
 	}
-	// Default: use git ls-files to respect .gitignore
-	files, err := findFilesWithGit()
-	if err == nil && len(files) > 0 {
-		return files, nil
-	}
-	return nil, fmt.Errorf("no Dockerfiles or compose files found")
-}
-
-func findFilesWithGit() ([]string, error) {
-	out, err := exec.Command("git", "ls-files", "--cached", "--others", "--exclude-standard").Output()
+	matches, err := doublestar.FilepathGlob(globPattern)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("invalid glob pattern: %w", err)
 	}
-	var matches []string
-	for _, line := range strings.Split(string(out), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		if isTargetFile(filepath.Base(line)) {
-			matches = append(matches, line)
-		}
+	if len(matches) == 0 {
+		return nil, fmt.Errorf("no files matched pattern: %s", globPattern)
 	}
 	return matches, nil
 }

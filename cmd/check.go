@@ -17,6 +17,7 @@ var checkCmd = &cobra.Command{
 	Use:   "check",
 	Short: "Check if FROM images are pinned to digests",
 	Long:  "Validate that Dockerfile FROM lines have @sha256:<digest> and that digests exist in the registry.",
+	Args:  cobra.NoArgs,
 	RunE:  runCheck,
 }
 
