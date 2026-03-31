@@ -86,7 +86,20 @@ func (r *CachedResolver) Resolve(ctx context.Context, imageRef string) (string, 
 }
 
 func (r *CachedResolver) Exists(ctx context.Context, imageRef string) (bool, error) {
-	return r.inner.Exists(ctx, imageRef)
+	r.mu.RLock()
+	entry, ok := r.cache[imageRef]
+	r.mu.RUnlock()
+	if ok {
+		return entry.err == nil, entry.err
+	}
+
+	exists, err := r.inner.Exists(ctx, imageRef)
+
+	r.mu.Lock()
+	r.cache[imageRef] = cacheEntry{err: err}
+	r.mu.Unlock()
+
+	return exists, err
 }
 
 type MockResolver struct {

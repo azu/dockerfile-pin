@@ -5,7 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"runtime"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/azu/dockerfile-pin/internal/compose"
 	"github.com/azu/dockerfile-pin/internal/dockerfile"
@@ -55,39 +58,77 @@ func runCheck(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ctx := context.Background()
-	res := &resolver.CraneResolver{}
-	var results []CheckResult
-	hasFail := false
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	res := resolver.NewCachedResolver(&resolver.CraneResolver{})
 
+	// Phase 1: parse all files and collect results (no registry calls yet)
+	var allResults []CheckResult
+	var needsCheck []int // indices into allResults that need registry verification
 	for _, filePath := range files {
 		var fileResults []CheckResult
 		var err error
 		switch DetectFileType(filePath) {
 		case FileTypeCompose:
-			fileResults, err = checkComposeFile(ctx, filePath, res, checkSyntaxOnly, checkIgnore)
+			fileResults, err = parseComposeForCheck(filePath, checkSyntaxOnly, checkIgnore)
 		default:
-			fileResults, err = checkDockerfile(ctx, filePath, res, checkSyntaxOnly, checkIgnore)
+			fileResults, err = parseDockerfileForCheck(filePath, checkSyntaxOnly, checkIgnore)
 		}
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error processing %s: %v\n", filePath, err)
 			continue
 		}
-		results = append(results, fileResults...)
-		for _, r := range fileResults {
-			if r.Status == "fail" {
-				hasFail = true
+		baseIdx := len(allResults)
+		allResults = append(allResults, fileResults...)
+		for i, r := range fileResults {
+			if r.Status == "pending" {
+				needsCheck = append(needsCheck, baseIdx+i)
 			}
 		}
 	}
 
+	// Phase 2: verify digests in parallel
+	if len(needsCheck) > 0 {
+		sem := make(chan struct{}, runtime.NumCPU()*2)
+		var wg sync.WaitGroup
+		var mu sync.Mutex
+		for _, idx := range needsCheck {
+			wg.Add(1)
+			go func(i int) {
+				defer wg.Done()
+				sem <- struct{}{}
+				defer func() { <-sem }()
+
+				r := &allResults[i]
+				fullRef := r.Image + "@" + r.Message // Message temporarily holds digest
+				exists, err := res.Exists(ctx, fullRef)
+
+				mu.Lock()
+				defer mu.Unlock()
+				if err != nil {
+					r.Status = "warn"
+					r.Message = fmt.Sprintf("registry check failed: %v", err)
+				} else if !exists {
+					r.Status = "fail"
+					r.Message = "digest not found in registry"
+				} else {
+					r.Status = "ok"
+					r.Message = ""
+				}
+			}(idx)
+		}
+		wg.Wait()
+	}
+
+	// Phase 3: output
+	hasFail := false
 	switch checkFormat {
 	case "json":
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
-		_ = enc.Encode(results)
+		_ = enc.Encode(allResults)
 	default:
-		for _, r := range results {
+		for _, r := range allResults {
 			var prefix string
 			switch r.Status {
 			case "ok":
@@ -102,6 +143,12 @@ func runCheck(cmd *cobra.Command, args []string) error {
 			fmt.Printf("%-5s %s:%-4d %-50s %s\n", prefix, r.File, r.Line, r.Original, r.Message)
 		}
 	}
+	for _, r := range allResults {
+		if r.Status == "fail" {
+			hasFail = true
+			break
+		}
+	}
 
 	if hasFail {
 		os.Exit(checkExitCode)
@@ -109,7 +156,9 @@ func runCheck(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func checkDockerfile(ctx context.Context, filePath string, res resolver.DigestResolver, syntaxOnly bool, ignoreImages []string) ([]CheckResult, error) {
+// parseDockerfileForCheck parses a Dockerfile and returns CheckResults.
+// Results that need registry verification have Status="pending" and Message=digest.
+func parseDockerfileForCheck(filePath string, syntaxOnly bool, ignoreImages []string) ([]CheckResult, error) {
 	content, err := os.ReadFile(filePath)
 	if err != nil {
 		return nil, fmt.Errorf("reading %s: %w", filePath, err)
@@ -150,31 +199,18 @@ func checkDockerfile(ctx context.Context, filePath string, res resolver.DigestRe
 			})
 			continue
 		}
-		fullRef := inst.ImageRef + "@" + inst.Digest
-		exists, err := res.Exists(ctx, fullRef)
-		if err != nil {
-			results = append(results, CheckResult{
-				File: filePath, Line: inst.StartLine, Image: inst.ImageRef,
-				Status: "warn", Message: fmt.Sprintf("registry check failed: %v", err), Original: inst.Original,
-			})
-			continue
-		}
-		if !exists {
-			results = append(results, CheckResult{
-				File: filePath, Line: inst.StartLine, Image: inst.ImageRef,
-				Status: "fail", Message: "digest not found in registry", Original: inst.Original,
-			})
-			continue
-		}
+		// Needs registry check: store digest in Message temporarily
 		results = append(results, CheckResult{
 			File: filePath, Line: inst.StartLine, Image: inst.ImageRef,
-			Status: "ok", Message: "", Original: inst.Original,
+			Status: "pending", Message: inst.Digest, Original: inst.Original,
 		})
 	}
 	return results, nil
 }
 
-func checkComposeFile(ctx context.Context, filePath string, res resolver.DigestResolver, syntaxOnly bool, ignoreImages []string) ([]CheckResult, error) {
+// parseComposeForCheck parses a compose file and returns CheckResults.
+// Results that need registry verification have Status="pending" and Message=digest.
+func parseComposeForCheck(filePath string, syntaxOnly bool, ignoreImages []string) ([]CheckResult, error) {
 	content, err := os.ReadFile(filePath)
 	if err != nil {
 		return nil, fmt.Errorf("reading %s: %w", filePath, err)
@@ -213,25 +249,9 @@ func checkComposeFile(ctx context.Context, filePath string, res resolver.DigestR
 			})
 			continue
 		}
-		fullRef := ref.ImageRef + "@" + ref.Digest
-		exists, err := res.Exists(ctx, fullRef)
-		if err != nil {
-			results = append(results, CheckResult{
-				File: filePath, Line: ref.Line, Image: ref.ImageRef,
-				Status: "warn", Message: fmt.Sprintf("registry check failed: %v", err), Original: "image: " + ref.RawRef,
-			})
-			continue
-		}
-		if !exists {
-			results = append(results, CheckResult{
-				File: filePath, Line: ref.Line, Image: ref.ImageRef,
-				Status: "fail", Message: "digest not found in registry", Original: "image: " + ref.RawRef,
-			})
-			continue
-		}
 		results = append(results, CheckResult{
 			File: filePath, Line: ref.Line, Image: ref.ImageRef,
-			Status: "ok", Message: "", Original: "image: " + ref.RawRef,
+			Status: "pending", Message: ref.Digest, Original: "image: " + ref.RawRef,
 		})
 	}
 	return results, nil
