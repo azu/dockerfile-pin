@@ -4,16 +4,12 @@ on:
     types: [closed]
     branches: [main]
 
-permissions:
-  contents: write
-  pull-requests: write
-  id-token: write
-  attestations: write
-  actions: read
-
 jobs:
   release:
     if: github.event.pull_request.merged == true && contains(github.event.pull_request.labels.*.name, 'Type: Release')
+    permissions:
+      contents: write
+      pull-requests: write
     runs-on: ubuntu-latest
     outputs:
       tag: ${{ steps.tag.outputs.tag }}
