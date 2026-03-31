@@ -27,7 +27,7 @@ func DetectFileType(path string) FileType {
 }
 
 // defaultGlob is used when neither -f nor --glob is specified.
-const defaultGlob = "**/{Dockerfile,Dockerfile.*,dockerfile_*.tmpl,docker-compose.yml,docker-compose.yaml,compose.yml,compose.yaml}"
+const defaultGlob = "**/{Dockerfile,Dockerfile.*,dockerfile_*.tmpl,docker-compose*.yml,docker-compose*.yaml,compose.yml,compose.yaml}"
 
 func FindFiles(filePath string, globPattern string) ([]string, error) {
 	if filePath != "" {
@@ -89,7 +89,7 @@ func findFilesWithGlob(pattern string) ([]string, error) {
 }
 
 func inSkipDir(path string) bool {
-	for _, part := range strings.Split(filepath.ToSlash(path), "/") {
+	for part := range strings.SplitSeq(filepath.ToSlash(path), "/") {
 		if skipDirs[part] {
 			return true
 		}
@@ -103,7 +103,7 @@ func findFilesWithGit() ([]string, error) {
 		return nil, err
 	}
 	var matches []string
-	for _, line := range strings.Split(string(out), "\n") {
+	for line := range strings.SplitSeq(string(out), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
