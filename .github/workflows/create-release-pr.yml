@@ -22,6 +22,7 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Calculate next version
         id: version
@@ -41,8 +42,9 @@ jobs:
           echo "New version: $NEW_VERSION"
 
       - name: Check if tag already exists
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
-          VERSION="${{ steps.version.outputs.version }}"
           if git rev-parse "$VERSION" >/dev/null 2>&1; then
             echo "::error::Tag $VERSION already exists"
             exit 1
@@ -66,12 +68,14 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ steps.version.outputs.version }}
+          REPO: ${{ github.repository }}
         run: |
           BRANCH="release/${VERSION}"
 
           git checkout -b "$BRANCH"
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git"
 
           # Create an empty commit to mark the release
           git commit --allow-empty -m "chore: release ${VERSION}"
