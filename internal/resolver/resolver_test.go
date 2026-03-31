@@ -28,6 +28,34 @@ func TestMockResolver_Resolve(t *testing.T) {
 	}
 }
 
+func TestCachedResolver_Exists_NonExistent(t *testing.T) {
+	mock := &MockResolver{
+		Digests: map[string]string{
+			"node:20@sha256:abc": "sha256:abc",
+		},
+	}
+	cached := NewCachedResolver(mock)
+	ctx := context.Background()
+
+	// First call: image does not exist
+	exists, err := cached.Exists(ctx, "node:20@sha256:nonexistent")
+	if err != nil {
+		t.Fatalf("Exists() error = %v", err)
+	}
+	if exists {
+		t.Error("Exists() = true, want false")
+	}
+
+	// Second call (cache hit): must still return false
+	exists, err = cached.Exists(ctx, "node:20@sha256:nonexistent")
+	if err != nil {
+		t.Fatalf("Exists() cached error = %v", err)
+	}
+	if exists {
+		t.Error("Exists() cached = true, want false (cache returned wrong result)")
+	}
+}
+
 func TestMockResolver_Exists(t *testing.T) {
 	mock := &MockResolver{
 		Digests: map[string]string{

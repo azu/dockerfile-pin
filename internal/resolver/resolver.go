@@ -58,6 +58,7 @@ type CachedResolver struct {
 
 type cacheEntry struct {
 	digest string
+	exists bool
 	err    error
 }
 
@@ -90,13 +91,13 @@ func (r *CachedResolver) Exists(ctx context.Context, imageRef string) (bool, err
 	entry, ok := r.cache[imageRef]
 	r.mu.RUnlock()
 	if ok {
-		return entry.err == nil, entry.err
+		return entry.exists, entry.err
 	}
 
 	exists, err := r.inner.Exists(ctx, imageRef)
 
 	r.mu.Lock()
-	r.cache[imageRef] = cacheEntry{err: err}
+	r.cache[imageRef] = cacheEntry{exists: exists, err: err}
 	r.mu.Unlock()
 
 	return exists, err

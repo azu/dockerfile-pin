@@ -27,7 +27,7 @@ func DetectFileType(path string) FileType {
 }
 
 // defaultGlob is used when neither -f nor --glob is specified.
-const defaultGlob = "**/{Dockerfile,Dockerfile.*,dockerfile_*.tmpl,docker-compose*.yml,docker-compose*.yaml,compose.yml,compose.yaml}"
+const defaultGlob = "**/{Dockerfile,Dockerfile.*,docker-compose*.yml,docker-compose*.yaml,compose.yml,compose.yaml}"
 
 func FindFiles(filePath string, globPattern string) ([]string, error) {
 	if filePath != "" {
