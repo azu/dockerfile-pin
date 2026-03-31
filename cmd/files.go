@@ -66,7 +66,6 @@ func FindFiles(filePath string, globPattern string) ([]string, error) {
 var skipDirs = map[string]bool{
 	"node_modules": true,
 	"vendor":       true,
-	".git":         true,
 }
 
 func findFilesWithGlob(pattern string) ([]string, error) {

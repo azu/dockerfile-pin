@@ -91,7 +91,6 @@ func runCheck(cmd *cobra.Command, args []string) error {
 	if len(needsCheck) > 0 {
 		sem := make(chan struct{}, runtime.NumCPU()*2)
 		var wg sync.WaitGroup
-		var mu sync.Mutex
 		for _, idx := range needsCheck {
 			wg.Add(1)
 			go func(i int) {
@@ -99,12 +98,10 @@ func runCheck(cmd *cobra.Command, args []string) error {
 				sem <- struct{}{}
 				defer func() { <-sem }()
 
+				// Each goroutine exclusively owns allResults[i], no mutex needed
 				r := &allResults[i]
 				fullRef := r.Image + "@" + r.Message // Message temporarily holds digest
 				exists, err := res.Exists(ctx, fullRef)
-
-				mu.Lock()
-				defer mu.Unlock()
 				if err != nil {
 					r.Status = "warn"
 					r.Message = fmt.Sprintf("registry check failed: %v", err)
