@@ -103,6 +103,47 @@ func TestCachedResolver_Exists_DeduplicatesCalls(t *testing.T) {
 	}
 }
 
+func TestCachedResolver_CrossMethodNoInterference(t *testing.T) {
+	mock := &MockResolver{
+		Digests: map[string]string{
+			"node:20": "sha256:abc",
+		},
+	}
+	cached := NewCachedResolver(mock)
+	ctx := context.Background()
+
+	// Resolve first, then Exists on the same key must still work
+	digest, err := cached.Resolve(ctx, "node:20")
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+	if digest != "sha256:abc" {
+		t.Errorf("Resolve() = %q, want %q", digest, "sha256:abc")
+	}
+
+	exists, err := cached.Exists(ctx, "node:20")
+	if err != nil {
+		t.Fatalf("Exists() error = %v", err)
+	}
+	if !exists {
+		t.Error("Exists() after Resolve() = false, want true")
+	}
+
+	// Exists first on a different key, then Resolve
+	exists, err = cached.Exists(ctx, "python:3.12")
+	if err != nil {
+		t.Fatalf("Exists(python) error = %v", err)
+	}
+	if exists {
+		t.Error("Exists(python) = true, want false (not in mock)")
+	}
+
+	_, err = cached.Resolve(ctx, "python:3.12")
+	if err == nil {
+		t.Error("Resolve(python) after Exists() should error for unknown image")
+	}
+}
+
 // CountingResolver wraps a DigestResolver and counts calls.
 type CountingResolver struct {
 	inner        DigestResolver
