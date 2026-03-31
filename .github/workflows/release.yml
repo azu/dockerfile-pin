@@ -6,7 +6,10 @@ on:
 
 jobs:
   release:
-    if: github.event.pull_request.merged == true && contains(github.event.pull_request.labels.*.name, 'Type: Release')
+    if: >-
+      github.event.pull_request.merged == true &&
+      contains(github.event.pull_request.labels.*.name, 'Type: Release') &&
+      startsWith(github.event.pull_request.head.ref, 'release/v')
     permissions:
       contents: write
       pull-requests: write
