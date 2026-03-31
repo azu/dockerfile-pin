@@ -52,10 +52,12 @@ jobs:
         id: release_notes
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+          REPO: ${{ github.repository }}
         run: |
           LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
-          gh api repos/${{ github.repository }}/releases/generate-notes \
-            -f tag_name="${{ steps.version.outputs.version }}" \
+          gh api "repos/${REPO}/releases/generate-notes" \
+            -f tag_name="${VERSION}" \
             ${LATEST_TAG:+-f previous_tag_name="$LATEST_TAG"} \
             -f target_commitish="main" \
             --jq '.body' > /tmp/release-notes.md
@@ -63,8 +65,8 @@ jobs:
       - name: Create release branch and PR
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
-          VERSION="${{ steps.version.outputs.version }}"
           BRANCH="release/${VERSION}"
 
           git checkout -b "$BRANCH"
