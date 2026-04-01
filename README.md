@@ -18,23 +18,11 @@ sudo mv dockerfile-pin /usr/local/bin/
 
 ### aqua
 
-Add to your `aqua.yaml`:
-
-```yaml
-registries:
-  - name: dockerfile-pin
-    type: github_content
-    repo_owner: azu
-    repo_name: dockerfile-pin
-    ref: <commit-sha> # main
-    path: registry.yaml
-packages:
-  - name: azu/dockerfile-pin@v1.0.1
-    registry: dockerfile-pin
-```
-
 ```bash
+aqua init
+aqua generate -i azu/dockerfile-pin
 aqua i
+aqua exec -- dockerfile-pin --help
 ```
 
 ### Go
@@ -157,7 +145,7 @@ Exit code is `1` when any check fails (configurable with `--exit-code`).
 
 Validate that all images are pinned on every pull request.
 
-With aqua (if your project already uses aqua):
+With aqua (if your project already uses aqua, add `azu/dockerfile-pin` to your `aqua.yaml`):
 
 ```yaml
 # .github/workflows/dockerfile-check.yml
