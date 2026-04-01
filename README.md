@@ -230,10 +230,10 @@ For private registries (GCR, GHCR, ECR), configure Docker credentials before run
 
 ## Digest Updates
 
-`--update` re-resolves each tag against the registry and replaces the existing digest with the latest one. The tag itself is not changed.
+`--update` re-resolves each tag against the registry and replaces the existing digest with the current digest of that tag. The tag itself is not changed.
 
 ```bash
-# Update all pinned digests to latest
+# Re-resolve all pinned digests from the registry
 dockerfile-pin run --write --update
 ```
 

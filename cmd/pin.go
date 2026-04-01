@@ -92,9 +92,9 @@ func runRun(cmd *cobra.Command, args []string) error {
 	for _, pf := range parsed {
 		switch pf.fileType {
 		case FileTypeCompose:
-			applyCompose(pf, digestMap, dryRun)
+			applyCompose(pf, digestMap, dryRun, runUpdate)
 		default:
-			applyDockerfile(pf, digestMap, dryRun)
+			applyDockerfile(pf, digestMap, dryRun, runUpdate)
 		}
 	}
 	return nil
@@ -170,10 +170,10 @@ func resolveParallel(ctx context.Context, res resolver.DigestResolver, refs []st
 	return results
 }
 
-func applyDockerfile(pf parsedFile, digestMap map[string]string, dryRun bool) {
+func applyDockerfile(pf parsedFile, digestMap map[string]string, dryRun bool, update bool) {
 	digests := make(map[int]string)
 	for i, inst := range pf.dockerInsts {
-		if inst.Skip {
+		if inst.Skip || (inst.Digest != "" && !update) {
 			continue
 		}
 		if d, ok := digestMap[inst.ImageRef]; ok {
@@ -196,10 +196,10 @@ func applyDockerfile(pf parsedFile, digestMap map[string]string, dryRun bool) {
 	fmt.Printf("pinned %d image(s) in %s\n", len(digests), pf.path)
 }
 
-func applyCompose(pf parsedFile, digestMap map[string]string, dryRun bool) {
+func applyCompose(pf parsedFile, digestMap map[string]string, dryRun bool, update bool) {
 	digests := make(map[int]string)
 	for i, ref := range pf.composeRefs {
-		if ref.Skip {
+		if ref.Skip || (ref.Digest != "" && !update) {
 			continue
 		}
 		if d, ok := digestMap[ref.ImageRef]; ok {
