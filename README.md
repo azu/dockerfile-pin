@@ -230,7 +230,14 @@ For private registries (GCR, GHCR, ECR), configure Docker credentials before run
 
 ## Digest Updates
 
-This tool handles initial pinning and validation. For ongoing digest updates, use [Renovate](https://docs.renovatebot.com/docker/) which understands the `image:tag@sha256:digest` format.
+`--update` re-resolves each tag against the registry and replaces the existing digest with the latest one. The tag itself is not changed.
+
+```bash
+# Update all pinned digests to latest
+dockerfile-pin run --write --update
+```
+
+For automated ongoing digest updates, use [Renovate](https://docs.renovatebot.com/docker/) which understands the `image:tag@sha256:digest` format.
 
 ## License
 

@@ -173,7 +173,7 @@ func resolveParallel(ctx context.Context, res resolver.DigestResolver, refs []st
 func applyDockerfile(pf parsedFile, digestMap map[string]string, dryRun bool) {
 	digests := make(map[int]string)
 	for i, inst := range pf.dockerInsts {
-		if inst.Skip || inst.Digest != "" {
+		if inst.Skip {
 			continue
 		}
 		if d, ok := digestMap[inst.ImageRef]; ok {
@@ -199,7 +199,7 @@ func applyDockerfile(pf parsedFile, digestMap map[string]string, dryRun bool) {
 func applyCompose(pf parsedFile, digestMap map[string]string, dryRun bool) {
 	digests := make(map[int]string)
 	for i, ref := range pf.composeRefs {
-		if ref.Skip || ref.Digest != "" {
+		if ref.Skip {
 			continue
 		}
 		if d, ok := digestMap[ref.ImageRef]; ok {
