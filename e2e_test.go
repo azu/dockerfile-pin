@@ -260,6 +260,71 @@ jobs:
 	}
 }
 
+func TestPinWorkflowDockerPrefixEndToEnd(t *testing.T) {
+	input := `name: CI
+on: push
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    container: docker://node:24
+    services:
+      db:
+        image: docker://postgres:18
+    steps:
+      - uses: docker://alpine:3.19
+`
+	expected := `name: CI
+on: push
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    container: docker://node:24@sha256:aaa111
+    services:
+      db:
+        image: docker://postgres:18@sha256:bbb222
+    steps:
+      - uses: docker://alpine:3.19@sha256:ccc333
+`
+	mock := &resolver.MockResolver{
+		Digests: map[string]string{
+			"node:24":     "sha256:aaa111",
+			"postgres:18": "sha256:bbb222",
+			"alpine:3.19": "sha256:ccc333",
+		},
+	}
+
+	refs, err := actions.Parse([]byte(input))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+
+	// Verify docker:// is stripped from ImageRef before resolve
+	for _, ref := range refs {
+		if strings.HasPrefix(ref.ImageRef, "docker://") {
+			t.Errorf("ImageRef should not contain docker:// prefix: %q", ref.ImageRef)
+		}
+	}
+
+	ctx := context.Background()
+	digests := make(map[int]string)
+	for i, ref := range refs {
+		if ref.Skip || ref.Digest != "" {
+			continue
+		}
+		digest, err := mock.Resolve(ctx, ref.ImageRef)
+		if err != nil {
+			t.Fatalf("Resolve(%s) error = %v — docker:// prefix may not have been stripped", ref.ImageRef, err)
+		}
+		digests[i] = digest
+	}
+
+	result := actions.RewriteFile(input, refs, digests)
+
+	if result != expected {
+		t.Errorf("unexpected output:\n--- got ---\n%s\n--- want ---\n%s", result, expected)
+	}
+}
+
 func TestPinActionEndToEnd(t *testing.T) {
 	input := `name: My Action
 description: Custom action
