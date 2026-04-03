@@ -217,8 +217,35 @@ runs:
 	if err != nil {
 		t.Fatalf("Parse() error = %v", err)
 	}
-	if len(refs) != 0 {
-		t.Errorf("got %d refs, want 0 (local Dockerfile should be skipped)", len(refs))
+	if len(refs) != 1 {
+		t.Fatalf("got %d refs, want 1 (local Dockerfile should be a skip ref)", len(refs))
+	}
+	r := refs[0]
+	if !r.Skip {
+		t.Error("Skip should be true for local Dockerfile")
+	}
+	if r.SkipReason != "local Dockerfile" {
+		t.Errorf("SkipReason = %q, want %q", r.SkipReason, "local Dockerfile")
+	}
+}
+
+func TestParse_ActionLocalDockerfilePath(t *testing.T) {
+	content := []byte(`
+name: My Action
+description: A custom action
+runs:
+  using: docker
+  image: ./Dockerfile
+`)
+	refs, err := Parse(content)
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if len(refs) != 1 {
+		t.Fatalf("got %d refs, want 1", len(refs))
+	}
+	if !refs[0].Skip {
+		t.Error("Skip should be true for local Dockerfile path")
 	}
 }
 
@@ -266,6 +293,64 @@ version: "1.0"
 	}
 	if len(refs) != 0 {
 		t.Errorf("got %d refs, want 0", len(refs))
+	}
+}
+
+func TestParse_ContainerWithDockerPrefix(t *testing.T) {
+	content := []byte(`
+name: CI
+on: push
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    container: docker://node:24
+    steps:
+      - uses: actions/checkout@v4
+`)
+	refs, err := Parse(content)
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if len(refs) != 1 {
+		t.Fatalf("got %d refs, want 1", len(refs))
+	}
+	r := refs[0]
+	if r.ImageRef != "node:24" {
+		t.Errorf("ImageRef = %q, want %q", r.ImageRef, "node:24")
+	}
+	if !r.HasPrefix {
+		t.Error("HasPrefix should be true for docker:// prefixed container")
+	}
+	if r.RawRef != "docker://node:24" {
+		t.Errorf("RawRef = %q, want %q", r.RawRef, "docker://node:24")
+	}
+}
+
+func TestParse_ContainerImageWithDockerPrefix(t *testing.T) {
+	content := []byte(`
+name: CI
+on: push
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    container:
+      image: docker://node:24
+    steps:
+      - uses: actions/checkout@v4
+`)
+	refs, err := Parse(content)
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if len(refs) != 1 {
+		t.Fatalf("got %d refs, want 1", len(refs))
+	}
+	r := refs[0]
+	if r.ImageRef != "node:24" {
+		t.Errorf("ImageRef = %q, want %q", r.ImageRef, "node:24")
+	}
+	if !r.HasPrefix {
+		t.Error("HasPrefix should be true for docker:// prefixed container image")
 	}
 }
 

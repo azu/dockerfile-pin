@@ -110,14 +110,16 @@ func parseContainer(node *yaml.Node, location string) []ActionsImageRef {
 		if node.Value == "" {
 			return nil
 		}
-		ref := makeRef(node.Value, node.Line, false, location)
+		hasPrefix := strings.HasPrefix(node.Value, "docker://")
+		ref := makeRef(node.Value, node.Line, hasPrefix, location)
 		return []ActionsImageRef{ref}
 	case yaml.MappingNode:
 		imageNode := findMapValue(node, "image")
 		if imageNode == nil || imageNode.Kind != yaml.ScalarNode || imageNode.Value == "" {
 			return nil
 		}
-		ref := makeRef(imageNode.Value, imageNode.Line, false, location+".image")
+		hasPrefix := strings.HasPrefix(imageNode.Value, "docker://")
+		ref := makeRef(imageNode.Value, imageNode.Line, hasPrefix, location+".image")
 		return []ActionsImageRef{ref}
 	}
 	return nil
@@ -133,8 +135,15 @@ func parseAction(runsNode *yaml.Node) ([]ActionsImageRef, error) {
 	}
 	value := imageNode.Value
 	if !strings.HasPrefix(value, "docker://") {
-		// Not a Docker image (e.g., "Dockerfile" or "./Dockerfile")
-		return nil, nil
+		// Local Dockerfile reference (e.g., "Dockerfile" or "./Dockerfile")
+		return []ActionsImageRef{{
+			Location:   "runs.image",
+			ImageRef:   value,
+			RawRef:     value,
+			Line:       imageNode.Line,
+			Skip:       true,
+			SkipReason: "local Dockerfile",
+		}}, nil
 	}
 	ref := makeRef(value, imageNode.Line, true, "runs.image")
 	return []ActionsImageRef{ref}, nil
