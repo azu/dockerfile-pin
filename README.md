@@ -44,23 +44,20 @@ By default, shows changes without modifying files (dry-run).
 # Preview changes (dry-run, default)
 dockerfile-pin run
 
+# Actually write changes to files
+dockerfile-pin run --write
+
 # Preview a specific file
 dockerfile-pin run -f path/to/Dockerfile
+
+# Preview docker-compose.yml
+dockerfile-pin run -f docker-compose.yml
 
 # Preview multiple files using glob
 dockerfile-pin run --glob '**/Dockerfile*'
 
 # Multiple patterns with brace expansion
 dockerfile-pin run --glob '**/{Dockerfile,Dockerfile.*,docker-compose.yml,compose.yaml}'
-
-# Preview docker-compose.yml
-dockerfile-pin run -f docker-compose.yml
-
-# Actually write changes to files
-dockerfile-pin run --write
-
-# Update existing digests
-dockerfile-pin run --write --update
 
 # Ignore specific images (glob patterns, repeatable)
 dockerfile-pin run --ignore-images "mcr.microsoft.com/**"
