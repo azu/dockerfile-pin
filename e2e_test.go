@@ -212,9 +212,23 @@ jobs:
       - uses: docker://ghcr.io/foo/bar:latest
       - uses: actions/checkout@v4
 `
+	expected := `name: CI
+on: push
+jobs:
+  sample:
+    runs-on: ubuntu-latest
+    container:
+      image: node:24@sha256:aaa111
+    services:
+      db:
+        image: postgres:18@sha256:bbb222
+    steps:
+      - uses: docker://ghcr.io/foo/bar:latest@sha256:ccc333
+      - uses: actions/checkout@v4
+`
 	mock := &resolver.MockResolver{
 		Digests: map[string]string{
-			"node:24":                 "sha256:aaa111",
+			"node:24":                "sha256:aaa111",
 			"postgres:18":            "sha256:bbb222",
 			"ghcr.io/foo/bar:latest": "sha256:ccc333",
 		},
@@ -241,17 +255,8 @@ jobs:
 
 	result := actions.RewriteFile(input, refs, digests)
 
-	if !strings.Contains(result, "image: node:24@sha256:aaa111") {
-		t.Error("expected container image to be pinned")
-	}
-	if !strings.Contains(result, "image: postgres:18@sha256:bbb222") {
-		t.Error("expected service image to be pinned")
-	}
-	if !strings.Contains(result, "uses: docker://ghcr.io/foo/bar:latest@sha256:ccc333") {
-		t.Error("expected docker:// step to be pinned")
-	}
-	if !strings.Contains(result, "uses: actions/checkout@v4") {
-		t.Error("non-docker step should be unchanged")
+	if result != expected {
+		t.Errorf("unexpected output:\n--- got ---\n%s\n--- want ---\n%s", result, expected)
 	}
 }
 
@@ -261,6 +266,12 @@ description: Custom action
 runs:
   using: docker
   image: docker://debian:stretch-slim
+`
+	expected := `name: My Action
+description: Custom action
+runs:
+  using: docker
+  image: docker://debian:stretch-slim@sha256:ddd444
 `
 	mock := &resolver.MockResolver{
 		Digests: map[string]string{
@@ -289,8 +300,8 @@ runs:
 
 	result := actions.RewriteFile(input, refs, digests)
 
-	if !strings.Contains(result, "image: docker://debian:stretch-slim@sha256:ddd444") {
-		t.Errorf("expected action image to be pinned, got:\n%s", result)
+	if result != expected {
+		t.Errorf("unexpected output:\n--- got ---\n%s\n--- want ---\n%s", result, expected)
 	}
 }
 
@@ -373,7 +384,7 @@ jobs:
 `
 	mock := &resolver.MockResolver{
 		Digests: map[string]string{
-			"node:24":                 "sha256:newdigest",
+			"node:24":                "sha256:newdigest",
 			"ghcr.io/foo/bar:latest": "sha256:newdigest2",
 		},
 	}
@@ -383,7 +394,7 @@ jobs:
 		t.Fatalf("Parse() error = %v", err)
 	}
 
-	// Without --update: skip already-pinned
+	// Without --update: skip already-pinned (output should be identical to input)
 	ctx := context.Background()
 	digests := make(map[int]string)
 	for i, ref := range refs {
@@ -398,14 +409,21 @@ jobs:
 	}
 
 	result := actions.RewriteFile(input, refs, digests)
-	if !strings.Contains(result, "node:24@sha256:existingdigest") {
-		t.Error("already-pinned container image should be preserved without --update")
-	}
-	if !strings.Contains(result, "docker://ghcr.io/foo/bar:latest@sha256:existingdigest2") {
-		t.Error("already-pinned docker:// step should be preserved without --update")
+	if result != input {
+		t.Errorf("without --update, output should be identical to input:\n--- got ---\n%s\n--- want ---\n%s", result, input)
 	}
 
 	// With --update: resolve all
+	expectedUpdated := `name: CI
+on: push
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    container:
+      image: node:24@sha256:newdigest
+    steps:
+      - uses: docker://ghcr.io/foo/bar:latest@sha256:newdigest2
+`
 	digests2 := make(map[int]string)
 	for i, ref := range refs {
 		if ref.Skip {
@@ -419,11 +437,8 @@ jobs:
 	}
 
 	result2 := actions.RewriteFile(input, refs, digests2)
-	if !strings.Contains(result2, "node:24@sha256:newdigest") {
-		t.Errorf("with --update, container digest should be updated, got:\n%s", result2)
-	}
-	if !strings.Contains(result2, "docker://ghcr.io/foo/bar:latest@sha256:newdigest2") {
-		t.Errorf("with --update, docker:// digest should be updated, got:\n%s", result2)
+	if result2 != expectedUpdated {
+		t.Errorf("with --update, unexpected output:\n--- got ---\n%s\n--- want ---\n%s", result2, expectedUpdated)
 	}
 }
 
@@ -442,6 +457,19 @@ jobs:
         image: postgres:18
     steps:
       - uses: docker://alpine:3.19
+`
+	expected := `name: CI
+on: push
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    container:
+      image: node:24@sha256:aaa
+    services:
+      db:
+        image: postgres:18@sha256:bbb
+    steps:
+      - uses: docker://alpine:3.19@sha256:ccc
 `
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		t.Fatal(err)
@@ -467,14 +495,7 @@ jobs:
 		t.Fatal(err)
 	}
 
-	ws := string(written)
-	if !strings.Contains(ws, "image: node:24@sha256:aaa") {
-		t.Error("round-trip: container image not pinned")
-	}
-	if !strings.Contains(ws, "image: postgres:18@sha256:bbb") {
-		t.Error("round-trip: service image not pinned")
-	}
-	if !strings.Contains(ws, "uses: docker://alpine:3.19@sha256:ccc") {
-		t.Error("round-trip: docker:// step not pinned")
+	if string(written) != expected {
+		t.Errorf("round-trip failed:\n--- got ---\n%s\n--- want ---\n%s", string(written), expected)
 	}
 }
