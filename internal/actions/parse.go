@@ -74,8 +74,7 @@ func parseWorkflow(jobsNode *yaml.Node) ([]ActionsImageRef, error) {
 				}
 				imageNode := findMapValue(svcVal, "image")
 				if imageNode != nil && imageNode.Kind == yaml.ScalarNode && imageNode.Value != "" {
-					hasPrefix := strings.HasPrefix(imageNode.Value, "docker://")
-					ref := makeRef(imageNode.Value, imageNode.Line, hasPrefix,
+					ref := makeRef(imageNode.Value, imageNode.Line,
 						"jobs."+jobName+".services."+svcKey.Value+".image")
 					refs = append(refs, ref)
 				}
@@ -96,7 +95,7 @@ func parseWorkflow(jobsNode *yaml.Node) ([]ActionsImageRef, error) {
 				if !strings.HasPrefix(usesNode.Value, "docker://") {
 					continue
 				}
-				ref := makeRef(usesNode.Value, usesNode.Line, true,
+				ref := makeRef(usesNode.Value, usesNode.Line,
 					"jobs."+jobName+".steps.uses")
 				refs = append(refs, ref)
 			}
@@ -111,16 +110,14 @@ func parseContainer(node *yaml.Node, location string) []ActionsImageRef {
 		if node.Value == "" {
 			return nil
 		}
-		hasPrefix := strings.HasPrefix(node.Value, "docker://")
-		ref := makeRef(node.Value, node.Line, hasPrefix, location)
+		ref := makeRef(node.Value, node.Line, location)
 		return []ActionsImageRef{ref}
 	case yaml.MappingNode:
 		imageNode := findMapValue(node, "image")
 		if imageNode == nil || imageNode.Kind != yaml.ScalarNode || imageNode.Value == "" {
 			return nil
 		}
-		hasPrefix := strings.HasPrefix(imageNode.Value, "docker://")
-		ref := makeRef(imageNode.Value, imageNode.Line, hasPrefix, location+".image")
+		ref := makeRef(imageNode.Value, imageNode.Line, location+".image")
 		return []ActionsImageRef{ref}
 	}
 	return nil
@@ -146,22 +143,24 @@ func parseAction(runsNode *yaml.Node) ([]ActionsImageRef, error) {
 			SkipReason: "local Dockerfile",
 		}}, nil
 	}
-	ref := makeRef(value, imageNode.Line, true, "runs.image")
+	ref := makeRef(value, imageNode.Line, "runs.image")
 	return []ActionsImageRef{ref}, nil
 }
 
-// makeRef builds an ActionsImageRef from a raw value. If hasDockerPrefix is true,
-// the docker:// prefix is stripped from ImageRef. Digests are extracted from @.
-func makeRef(rawValue string, line int, hasDockerPrefix bool, location string) ActionsImageRef {
+// makeRef builds an ActionsImageRef from a raw value.
+// It auto-detects the docker:// prefix and strips it from ImageRef.
+// Digests are extracted from @.
+func makeRef(rawValue string, line int, location string) ActionsImageRef {
+	hasPrefix := strings.HasPrefix(rawValue, "docker://")
 	ref := ActionsImageRef{
 		Location:  location,
 		RawRef:    rawValue,
 		Line:      line,
-		HasPrefix: hasDockerPrefix,
+		HasPrefix: hasPrefix,
 	}
 
 	imageStr := rawValue
-	if hasDockerPrefix {
+	if hasPrefix {
 		imageStr = strings.TrimPrefix(rawValue, "docker://")
 	}
 
