@@ -16,7 +16,7 @@ curl -sL "https://github.com/azu/dockerfile-pin/releases/latest/download/dockerf
 sudo mv dockerfile-pin /usr/local/bin/
 ```
 
-### aqua
+### [aqua](https://aquaproj.github.io/)
 
 ```bash
 aqua init
