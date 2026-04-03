@@ -151,8 +151,10 @@ func TestLoadConfig(t *testing.T) {
 	t.Run("no config file", func(t *testing.T) {
 		dir := t.TempDir()
 		origDir, _ := os.Getwd()
-		os.Chdir(dir)
-		defer os.Chdir(origDir)
+		if err := os.Chdir(dir); err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = os.Chdir(origDir) }()
 
 		cfg, err := LoadConfig()
 		if err != nil {
@@ -166,15 +168,19 @@ func TestLoadConfig(t *testing.T) {
 	t.Run("yaml config", func(t *testing.T) {
 		dir := t.TempDir()
 		origDir, _ := os.Getwd()
-		os.Chdir(dir)
-		defer os.Chdir(origDir)
+		if err := os.Chdir(dir); err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = os.Chdir(origDir) }()
 
 		content := `ignore-images:
   - "ghcr.io/myorg/*"
   - "!ghcr.io/myorg/public-*"
   - "scratch"
 `
-		os.WriteFile(filepath.Join(dir, ".dockerfile-pin.yaml"), []byte(content), 0644)
+		if err := os.WriteFile(filepath.Join(dir, ".dockerfile-pin.yaml"), []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
 
 		cfg, err := LoadConfig()
 		if err != nil {
@@ -188,13 +194,17 @@ func TestLoadConfig(t *testing.T) {
 	t.Run("yml config", func(t *testing.T) {
 		dir := t.TempDir()
 		origDir, _ := os.Getwd()
-		os.Chdir(dir)
-		defer os.Chdir(origDir)
+		if err := os.Chdir(dir); err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = os.Chdir(origDir) }()
 
 		content := `ignore-images:
   - "scratch"
 `
-		os.WriteFile(filepath.Join(dir, ".dockerfile-pin.yml"), []byte(content), 0644)
+		if err := os.WriteFile(filepath.Join(dir, ".dockerfile-pin.yml"), []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
 
 		cfg, err := LoadConfig()
 		if err != nil {
@@ -208,11 +218,17 @@ func TestLoadConfig(t *testing.T) {
 	t.Run("yaml takes precedence over yml", func(t *testing.T) {
 		dir := t.TempDir()
 		origDir, _ := os.Getwd()
-		os.Chdir(dir)
-		defer os.Chdir(origDir)
+		if err := os.Chdir(dir); err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = os.Chdir(origDir) }()
 
-		os.WriteFile(filepath.Join(dir, ".dockerfile-pin.yaml"), []byte("ignore-images:\n  - \"a\"\n  - \"b\"\n"), 0644)
-		os.WriteFile(filepath.Join(dir, ".dockerfile-pin.yml"), []byte("ignore-images:\n  - \"c\"\n"), 0644)
+		if err := os.WriteFile(filepath.Join(dir, ".dockerfile-pin.yaml"), []byte("ignore-images:\n  - \"a\"\n  - \"b\"\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, ".dockerfile-pin.yml"), []byte("ignore-images:\n  - \"c\"\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
 
 		cfg, err := LoadConfig()
 		if err != nil {
@@ -226,10 +242,14 @@ func TestLoadConfig(t *testing.T) {
 	t.Run("invalid yaml", func(t *testing.T) {
 		dir := t.TempDir()
 		origDir, _ := os.Getwd()
-		os.Chdir(dir)
-		defer os.Chdir(origDir)
+		if err := os.Chdir(dir); err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = os.Chdir(origDir) }()
 
-		os.WriteFile(filepath.Join(dir, ".dockerfile-pin.yaml"), []byte("invalid: [yaml: bad"), 0644)
+		if err := os.WriteFile(filepath.Join(dir, ".dockerfile-pin.yaml"), []byte("invalid: [yaml: bad"), 0644); err != nil {
+			t.Fatal(err)
+		}
 
 		_, err := LoadConfig()
 		if err == nil {

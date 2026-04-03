@@ -326,4 +326,3 @@ func actionsOriginal(ref actions.ActionsImageRef) string {
 	}
 	return ref.RawRef
 }
-

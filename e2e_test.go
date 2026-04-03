@@ -571,9 +571,9 @@ func TestPinEndToEnd_IgnoreImages(t *testing.T) {
 
 	mock := &resolver.MockResolver{
 		Digests: map[string]string{
-			"node:20.11.1":               "sha256:aaa111",
-			"python:3.12-slim":           "sha256:bbb222",
-			"ghcr.io/myorg/internal:v1":  "sha256:ccc333",
+			"node:20.11.1":                "sha256:aaa111",
+			"python:3.12-slim":            "sha256:bbb222",
+			"ghcr.io/myorg/internal:v1":   "sha256:ccc333",
 			"ghcr.io/myorg/public-app:v1": "sha256:ddd444",
 		},
 	}
@@ -681,8 +681,10 @@ jobs:
 func TestConfigFileEndToEnd(t *testing.T) {
 	dir := t.TempDir()
 	origDir, _ := os.Getwd()
-	os.Chdir(dir)
-	defer os.Chdir(origDir)
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chdir(origDir) }()
 
 	configContent := `ignore-images:
   - "mcr.microsoft.com/**"
