@@ -63,6 +63,8 @@ dockerfile-pin run --write
 dockerfile-pin run --write --update
 ```
 
+#### Dockerfile
+
 **Before:**
 
 ```dockerfile
@@ -77,6 +79,80 @@ FROM scratch
 FROM node:20.11.1@sha256:e06aae17c40c7a6b5296ca6f942a02e6737ae61bbbf3e2158624bb0f887991b5
 FROM python:3.12-slim@sha256:3d5ed973e45820f5ba5e46bd065bd88b3a504ff0724d85980dcd05eab361fcf4 AS builder
 FROM scratch
+```
+
+#### docker-compose.yml
+
+**Before:**
+
+```yaml
+services:
+  web:
+    image: node:20.11.1
+    ports:
+      - "3000:3000"
+  db:
+    image: postgres:16.2
+    environment:
+      POSTGRES_PASSWORD: secret
+  app:
+    build: .
+    image: myapp:latest
+```
+
+**After:**
+
+```yaml
+services:
+  web:
+    image: node:20.11.1@sha256:e06aae17c40c7a6b5296ca6f942a02e6737ae61bbbf3e2158624bb0f887991b5
+    ports:
+      - "3000:3000"
+  db:
+    image: postgres:16.2@sha256:12345abcdef...
+    environment:
+      POSTGRES_PASSWORD: secret
+  app:
+    build: .
+    image: myapp:latest  # skipped (has build directive)
+```
+
+#### GitHub Actions
+
+**Before:**
+
+```yaml
+name: CI
+on: push
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    container:
+      image: node:24
+    services:
+      db:
+        image: postgres:18
+    steps:
+      - uses: docker://ghcr.io/foo/bar:latest
+      - uses: actions/checkout@v4
+```
+
+**After:**
+
+```yaml
+name: CI
+on: push
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    container:
+      image: node:24@sha256:aaa111...
+    services:
+      db:
+        image: postgres:18@sha256:bbb222...
+    steps:
+      - uses: docker://ghcr.io/foo/bar:latest@sha256:ccc333...
+      - uses: actions/checkout@v4  # not a Docker image, skipped
 ```
 
 ### Check
