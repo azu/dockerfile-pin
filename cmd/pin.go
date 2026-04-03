@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/azu/dockerfile-pin/internal/actions"
 	"github.com/azu/dockerfile-pin/internal/compose"
 	"github.com/azu/dockerfile-pin/internal/dockerfile"
 	"github.com/azu/dockerfile-pin/internal/resolver"
@@ -44,6 +45,7 @@ type parsedFile struct {
 	fileType    FileType
 	dockerInsts []dockerfile.FromInstruction
 	composeRefs []compose.ComposeImageRef
+	actionsRefs []actions.ActionsImageRef
 	content     []byte
 	imageRefs   []string // unique image refs that need resolving
 }
@@ -91,6 +93,8 @@ func runRun(cmd *cobra.Command, args []string) error {
 		switch pf.fileType {
 		case FileTypeCompose:
 			applyCompose(pf, digestMap, dryRun, runUpdate)
+		case FileTypeActions:
+			applyActions(pf, digestMap, dryRun, runUpdate)
 		default:
 			applyDockerfile(pf, digestMap, dryRun, runUpdate)
 		}
@@ -117,6 +121,18 @@ func parseFile(filePath string, update bool) (parsedFile, error) {
 			return parsedFile{}, fmt.Errorf("parsing %s: %w", filePath, err)
 		}
 		pf.composeRefs = refs
+		for _, ref := range refs {
+			if ref.Skip || (ref.Digest != "" && !update) {
+				continue
+			}
+			pf.imageRefs = append(pf.imageRefs, ref.ImageRef)
+		}
+	case FileTypeActions:
+		refs, err := actions.Parse(content)
+		if err != nil {
+			return parsedFile{}, fmt.Errorf("parsing %s: %w", filePath, err)
+		}
+		pf.actionsRefs = refs
 		for _, ref := range refs {
 			if ref.Skip || (ref.Digest != "" && !update) {
 				continue
@@ -182,6 +198,32 @@ func applyDockerfile(pf parsedFile, digestMap map[string]string, dryRun bool, up
 		return
 	}
 	result := dockerfile.RewriteFile(string(pf.content), pf.dockerInsts, digests)
+	if dryRun {
+		fmt.Printf("--- %s\n", pf.path)
+		fmt.Print(result)
+		return
+	}
+	if err := os.WriteFile(pf.path, []byte(result), 0644); err != nil {
+		fmt.Fprintf(os.Stderr, "error writing %s: %v\n", pf.path, err)
+		return
+	}
+	fmt.Printf("pinned %d image(s) in %s\n", len(digests), pf.path)
+}
+
+func applyActions(pf parsedFile, digestMap map[string]string, dryRun bool, update bool) {
+	digests := make(map[int]string)
+	for i, ref := range pf.actionsRefs {
+		if ref.Skip || (ref.Digest != "" && !update) {
+			continue
+		}
+		if d, ok := digestMap[ref.ImageRef]; ok {
+			digests[i] = d
+		}
+	}
+	if len(digests) == 0 {
+		return
+	}
+	result := actions.RewriteFile(string(pf.content), pf.actionsRefs, digests)
 	if dryRun {
 		fmt.Printf("--- %s\n", pf.path)
 		fmt.Print(result)

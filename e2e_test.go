@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/azu/dockerfile-pin/internal/actions"
 	"github.com/azu/dockerfile-pin/internal/dockerfile"
 	"github.com/azu/dockerfile-pin/internal/resolver"
 )
@@ -193,5 +194,287 @@ func TestRealWorldPatterns(t *testing.T) {
 		if instructions[e.idx].ImageRef != e.imageRef {
 			t.Errorf("[%d] ImageRef = %q, want %q", e.idx, instructions[e.idx].ImageRef, e.imageRef)
 		}
+	}
+}
+
+func TestPinWorkflowEndToEnd(t *testing.T) {
+	input := `name: CI
+on: push
+jobs:
+  sample:
+    runs-on: ubuntu-latest
+    container:
+      image: node:24
+    services:
+      db:
+        image: postgres:18
+    steps:
+      - uses: docker://ghcr.io/foo/bar:latest
+      - uses: actions/checkout@v4
+`
+	mock := &resolver.MockResolver{
+		Digests: map[string]string{
+			"node:24":                 "sha256:aaa111",
+			"postgres:18":            "sha256:bbb222",
+			"ghcr.io/foo/bar:latest": "sha256:ccc333",
+		},
+	}
+
+	refs, err := actions.Parse([]byte(input))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+
+	ctx := context.Background()
+	digests := make(map[int]string)
+	for i, ref := range refs {
+		if ref.Skip || ref.Digest != "" {
+			continue
+		}
+		digest, err := mock.Resolve(ctx, ref.ImageRef)
+		if err != nil {
+			t.Logf("skipping %s: %v", ref.ImageRef, err)
+			continue
+		}
+		digests[i] = digest
+	}
+
+	result := actions.RewriteFile(input, refs, digests)
+
+	if !strings.Contains(result, "image: node:24@sha256:aaa111") {
+		t.Error("expected container image to be pinned")
+	}
+	if !strings.Contains(result, "image: postgres:18@sha256:bbb222") {
+		t.Error("expected service image to be pinned")
+	}
+	if !strings.Contains(result, "uses: docker://ghcr.io/foo/bar:latest@sha256:ccc333") {
+		t.Error("expected docker:// step to be pinned")
+	}
+	if !strings.Contains(result, "uses: actions/checkout@v4") {
+		t.Error("non-docker step should be unchanged")
+	}
+}
+
+func TestPinActionEndToEnd(t *testing.T) {
+	input := `name: My Action
+description: Custom action
+runs:
+  using: docker
+  image: docker://debian:stretch-slim
+`
+	mock := &resolver.MockResolver{
+		Digests: map[string]string{
+			"debian:stretch-slim": "sha256:ddd444",
+		},
+	}
+
+	refs, err := actions.Parse([]byte(input))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+
+	ctx := context.Background()
+	digests := make(map[int]string)
+	for i, ref := range refs {
+		if ref.Skip || ref.Digest != "" {
+			continue
+		}
+		digest, err := mock.Resolve(ctx, ref.ImageRef)
+		if err != nil {
+			t.Logf("skipping %s: %v", ref.ImageRef, err)
+			continue
+		}
+		digests[i] = digest
+	}
+
+	result := actions.RewriteFile(input, refs, digests)
+
+	if !strings.Contains(result, "image: docker://debian:stretch-slim@sha256:ddd444") {
+		t.Errorf("expected action image to be pinned, got:\n%s", result)
+	}
+}
+
+func TestCheckWorkflowEndToEnd(t *testing.T) {
+	input := `name: CI
+on: push
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    container:
+      image: node:24
+    services:
+      db:
+        image: postgres:18@sha256:validdigest
+    steps:
+      - uses: docker://ghcr.io/foo/bar:latest@sha256:invaliddigest
+`
+	mock := &resolver.MockResolver{
+		Digests: map[string]string{
+			"postgres:18@sha256:validdigest": "sha256:validdigest",
+		},
+	}
+
+	refs, err := actions.Parse([]byte(input))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+
+	ctx := context.Background()
+	type checkResult struct {
+		imageRef string
+		status   string
+	}
+	var results []checkResult
+
+	for _, ref := range refs {
+		if ref.Skip {
+			results = append(results, checkResult{ref.ImageRef, "skip"})
+			continue
+		}
+		if ref.Digest == "" {
+			results = append(results, checkResult{ref.ImageRef, "fail-missing"})
+			continue
+		}
+		fullRef := ref.ImageRef + "@" + ref.Digest
+		exists, _ := mock.Exists(ctx, fullRef)
+		if exists {
+			results = append(results, checkResult{ref.ImageRef, "ok"})
+		} else {
+			results = append(results, checkResult{ref.ImageRef, "fail-notfound"})
+		}
+	}
+
+	expected := []checkResult{
+		{"node:24", "fail-missing"},
+		{"postgres:18", "ok"},
+		{"ghcr.io/foo/bar:latest", "fail-notfound"},
+	}
+
+	if len(results) != len(expected) {
+		t.Fatalf("expected %d results, got %d: %+v", len(expected), len(results), results)
+	}
+	for i, want := range expected {
+		if results[i] != want {
+			t.Errorf("[%d] got %+v, want %+v", i, results[i], want)
+		}
+	}
+}
+
+func TestPinWorkflow_AlreadyPinned(t *testing.T) {
+	input := `name: CI
+on: push
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    container:
+      image: node:24@sha256:existingdigest
+    steps:
+      - uses: docker://ghcr.io/foo/bar:latest@sha256:existingdigest2
+`
+	mock := &resolver.MockResolver{
+		Digests: map[string]string{
+			"node:24":                 "sha256:newdigest",
+			"ghcr.io/foo/bar:latest": "sha256:newdigest2",
+		},
+	}
+
+	refs, err := actions.Parse([]byte(input))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+
+	// Without --update: skip already-pinned
+	ctx := context.Background()
+	digests := make(map[int]string)
+	for i, ref := range refs {
+		if ref.Skip || ref.Digest != "" {
+			continue
+		}
+		digest, err := mock.Resolve(ctx, ref.ImageRef)
+		if err != nil {
+			continue
+		}
+		digests[i] = digest
+	}
+
+	result := actions.RewriteFile(input, refs, digests)
+	if !strings.Contains(result, "node:24@sha256:existingdigest") {
+		t.Error("already-pinned container image should be preserved without --update")
+	}
+	if !strings.Contains(result, "docker://ghcr.io/foo/bar:latest@sha256:existingdigest2") {
+		t.Error("already-pinned docker:// step should be preserved without --update")
+	}
+
+	// With --update: resolve all
+	digests2 := make(map[int]string)
+	for i, ref := range refs {
+		if ref.Skip {
+			continue
+		}
+		digest, err := mock.Resolve(ctx, ref.ImageRef)
+		if err != nil {
+			continue
+		}
+		digests2[i] = digest
+	}
+
+	result2 := actions.RewriteFile(input, refs, digests2)
+	if !strings.Contains(result2, "node:24@sha256:newdigest") {
+		t.Errorf("with --update, container digest should be updated, got:\n%s", result2)
+	}
+	if !strings.Contains(result2, "docker://ghcr.io/foo/bar:latest@sha256:newdigest2") {
+		t.Errorf("with --update, docker:// digest should be updated, got:\n%s", result2)
+	}
+}
+
+func TestPinWorkflowFileRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "ci.yml")
+	content := `name: CI
+on: push
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    container:
+      image: node:24
+    services:
+      db:
+        image: postgres:18
+    steps:
+      - uses: docker://alpine:3.19
+`
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	refs, err := actions.Parse([]byte(content))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+
+	digests := map[int]string{
+		0: "sha256:aaa",
+		1: "sha256:bbb",
+		2: "sha256:ccc",
+	}
+	result := actions.RewriteFile(content, refs, digests)
+
+	if err := os.WriteFile(path, []byte(result), 0644); err != nil {
+		t.Fatal(err)
+	}
+	written, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ws := string(written)
+	if !strings.Contains(ws, "image: node:24@sha256:aaa") {
+		t.Error("round-trip: container image not pinned")
+	}
+	if !strings.Contains(ws, "image: postgres:18@sha256:bbb") {
+		t.Error("round-trip: service image not pinned")
+	}
+	if !strings.Contains(ws, "uses: docker://alpine:3.19@sha256:ccc") {
+		t.Error("round-trip: docker:// step not pinned")
 	}
 }

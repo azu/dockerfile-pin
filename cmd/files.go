@@ -15,19 +15,35 @@ type FileType int
 const (
 	FileTypeDockerfile FileType = iota
 	FileTypeCompose
+	FileTypeActions
 )
 
 func DetectFileType(path string) FileType {
+	normalized := filepath.ToSlash(path)
 	base := filepath.Base(path)
 	lower := strings.ToLower(base)
+
+	// GitHub Actions workflow files
+	if strings.Contains(normalized, ".github/workflows/") &&
+		(strings.HasSuffix(lower, ".yml") || strings.HasSuffix(lower, ".yaml")) {
+		return FileTypeActions
+	}
+
+	// GitHub Actions action metadata files
+	if lower == "action.yml" || lower == "action.yaml" {
+		return FileTypeActions
+	}
+
+	// Compose files (any other YAML)
 	if strings.HasSuffix(lower, ".yml") || strings.HasSuffix(lower, ".yaml") {
 		return FileTypeCompose
 	}
+
 	return FileTypeDockerfile
 }
 
 // defaultGlob is used when neither -f nor --glob is specified.
-const defaultGlob = "**/{Dockerfile,Dockerfile.*,docker-compose*.yml,docker-compose*.yaml,compose.yml,compose.yaml}"
+const defaultGlob = "**/{Dockerfile,Dockerfile.*,docker-compose*.yml,docker-compose*.yaml,compose.yml,compose.yaml,action.yml,action.yaml,.github/workflows/*.yml,.github/workflows/*.yaml}"
 
 func FindFiles(filePath string, globPattern string) ([]string, error) {
 	if filePath != "" {
@@ -57,7 +73,7 @@ func FindFiles(filePath string, globPattern string) ([]string, error) {
 		return nil, err
 	}
 	if len(matches) == 0 {
-		return nil, fmt.Errorf("no Dockerfiles or compose files found")
+		return nil, fmt.Errorf("no Dockerfiles, compose files, or GitHub Actions files found")
 	}
 	return matches, nil
 }

@@ -108,6 +108,67 @@ func TestFindFiles_DefaultRecursive(t *testing.T) {
 	}
 }
 
+func TestDetectFileType(t *testing.T) {
+	tests := []struct {
+		path string
+		want FileType
+	}{
+		{"Dockerfile", FileTypeDockerfile},
+		{"Dockerfile.dev", FileTypeDockerfile},
+		{"services/api/Dockerfile", FileTypeDockerfile},
+		{"docker-compose.yml", FileTypeCompose},
+		{"docker-compose.yaml", FileTypeCompose},
+		{"compose.yml", FileTypeCompose},
+		{".github/workflows/ci.yml", FileTypeActions},
+		{".github/workflows/release.yaml", FileTypeActions},
+		{"action.yml", FileTypeActions},
+		{"action.yaml", FileTypeActions},
+		{"subdir/action.yml", FileTypeActions},
+		{"my-action/action.yaml", FileTypeActions},
+	}
+	for _, tt := range tests {
+		got := DetectFileType(tt.path)
+		if got != tt.want {
+			t.Errorf("DetectFileType(%q) = %d, want %d", tt.path, got, tt.want)
+		}
+	}
+}
+
+func TestFindFiles_DefaultIncludesActions(t *testing.T) {
+	dir := t.TempDir()
+	workflowDir := filepath.Join(dir, ".github", "workflows")
+	if err := os.MkdirAll(workflowDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	targets := []string{
+		filepath.Join(dir, "Dockerfile"),
+		filepath.Join(dir, "action.yml"),
+		filepath.Join(workflowDir, "ci.yml"),
+	}
+	for _, p := range targets {
+		if err := os.WriteFile(p, []byte("name: test"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	initGitRepo(t, dir)
+	gitAdd(t, dir, ".")
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chdir(origDir) }()
+	files, err := FindFiles("", "")
+	if err != nil {
+		t.Fatalf("FindFiles() error = %v", err)
+	}
+	if len(files) != 3 {
+		t.Errorf("FindFiles() returned %d files, want 3: %v", len(files), files)
+	}
+}
+
 func TestFindFiles_RespectsGitignore(t *testing.T) {
 	dir := t.TempDir()
 	ignored := filepath.Join(dir, "node_modules", "pkg")
