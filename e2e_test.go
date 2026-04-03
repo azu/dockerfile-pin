@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/azu/dockerfile-pin/cmd"
 	"github.com/azu/dockerfile-pin/internal/actions"
 	"github.com/azu/dockerfile-pin/internal/dockerfile"
 	"github.com/azu/dockerfile-pin/internal/resolver"
@@ -562,5 +563,162 @@ jobs:
 
 	if string(written) != expected {
 		t.Errorf("round-trip failed:\n--- got ---\n%s\n--- want ---\n%s", string(written), expected)
+	}
+}
+
+func TestPinEndToEnd_IgnoreImages(t *testing.T) {
+	input := "FROM node:20.11.1\nFROM python:3.12-slim AS builder\nFROM ghcr.io/myorg/internal:v1\nFROM ghcr.io/myorg/public-app:v1\nFROM scratch\n"
+
+	mock := &resolver.MockResolver{
+		Digests: map[string]string{
+			"node:20.11.1":               "sha256:aaa111",
+			"python:3.12-slim":           "sha256:bbb222",
+			"ghcr.io/myorg/internal:v1":  "sha256:ccc333",
+			"ghcr.io/myorg/public-app:v1": "sha256:ddd444",
+		},
+	}
+
+	ignorePatterns := []string{"ghcr.io/myorg/*", "!ghcr.io/myorg/public-*"}
+
+	instructions, err := dockerfile.Parse(strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+
+	ctx := context.Background()
+	digests := make(map[int]string)
+	for i, inst := range instructions {
+		if inst.Skip || inst.Digest != "" {
+			continue
+		}
+		if cmd.IsIgnored(inst.ImageRef, ignorePatterns) {
+			continue
+		}
+		digest, err := mock.Resolve(ctx, inst.ImageRef)
+		if err != nil {
+			continue
+		}
+		digests[i] = digest
+	}
+
+	result := dockerfile.RewriteFile(input, instructions, digests)
+
+	// node and python should be pinned
+	if !strings.Contains(result, "FROM node:20.11.1@sha256:aaa111") {
+		t.Error("expected node to be pinned")
+	}
+	if !strings.Contains(result, "FROM python:3.12-slim@sha256:bbb222 AS builder") {
+		t.Error("expected python to be pinned")
+	}
+	// ghcr.io/myorg/internal should be ignored (not pinned)
+	if strings.Contains(result, "ghcr.io/myorg/internal:v1@sha256:") {
+		t.Error("ghcr.io/myorg/internal should be ignored")
+	}
+	// ghcr.io/myorg/public-app should be pinned (negation overrides)
+	if !strings.Contains(result, "FROM ghcr.io/myorg/public-app:v1@sha256:ddd444") {
+		t.Error("ghcr.io/myorg/public-app should be pinned (negation pattern)")
+	}
+}
+
+func TestCheckEndToEnd_IgnoreImages(t *testing.T) {
+	input := `name: CI
+on: push
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    container:
+      image: node:24
+    services:
+      db:
+        image: mcr.microsoft.com/mssql/server:2019
+    steps:
+      - uses: docker://ghcr.io/foo/bar:latest
+`
+	ignorePatterns := []string{"mcr.microsoft.com/**"}
+
+	refs, err := actions.Parse([]byte(input))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+
+	type checkResult struct {
+		imageRef string
+		status   string
+	}
+	var results []checkResult
+
+	for _, ref := range refs {
+		if ref.Skip {
+			results = append(results, checkResult{ref.ImageRef, "skip"})
+			continue
+		}
+		if cmd.IsIgnored(ref.ImageRef, ignorePatterns) {
+			results = append(results, checkResult{ref.ImageRef, "ignored"})
+			continue
+		}
+		if ref.Digest == "" {
+			results = append(results, checkResult{ref.ImageRef, "fail-missing"})
+			continue
+		}
+	}
+
+	expected := []checkResult{
+		{"node:24", "fail-missing"},
+		{"mcr.microsoft.com/mssql/server:2019", "ignored"},
+		{"ghcr.io/foo/bar:latest", "fail-missing"},
+	}
+
+	if len(results) != len(expected) {
+		t.Fatalf("expected %d results, got %d: %+v", len(expected), len(results), results)
+	}
+	for i, want := range expected {
+		if results[i] != want {
+			t.Errorf("[%d] got %+v, want %+v", i, results[i], want)
+		}
+	}
+}
+
+func TestConfigFileEndToEnd(t *testing.T) {
+	dir := t.TempDir()
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(origDir)
+
+	configContent := `ignore-images:
+  - "mcr.microsoft.com/**"
+  - "scratch"
+`
+	if err := os.WriteFile(filepath.Join(dir, ".dockerfile-pin.yaml"), []byte(configContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := cmd.LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig() error = %v", err)
+	}
+
+	cliPatterns := []string{"ghcr.io/internal/*"}
+	patterns := cmd.MergeIgnorePatterns(cfg.IgnoreImages, cliPatterns)
+
+	// Config patterns + CLI patterns merged
+	if len(patterns) != 3 {
+		t.Fatalf("expected 3 patterns, got %d: %v", len(patterns), patterns)
+	}
+
+	// mcr.microsoft.com images should be ignored (from config)
+	if !cmd.IsIgnored("mcr.microsoft.com/playwright:v1.40.0-noble", patterns) {
+		t.Error("mcr.microsoft.com image should be ignored via config")
+	}
+	// scratch should be ignored (from config)
+	if !cmd.IsIgnored("scratch", patterns) {
+		t.Error("scratch should be ignored via config")
+	}
+	// ghcr.io/internal images should be ignored (from CLI)
+	if !cmd.IsIgnored("ghcr.io/internal/app:v1", patterns) {
+		t.Error("ghcr.io/internal image should be ignored via CLI")
+	}
+	// Other images should not be ignored
+	if cmd.IsIgnored("node:20", patterns) {
+		t.Error("node:20 should not be ignored")
 	}
 }

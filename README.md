@@ -61,6 +61,9 @@ dockerfile-pin run --write
 
 # Update existing digests
 dockerfile-pin run --write --update
+
+# Ignore specific images (glob patterns, repeatable)
+dockerfile-pin run --ignore-images "mcr.microsoft.com/**"
 ```
 
 **Before:**
@@ -99,8 +102,9 @@ dockerfile-pin check --syntax-only
 # JSON output for CI
 dockerfile-pin check --format json
 
-# Ignore specific images
-dockerfile-pin check --ignore-images scratch,mylocal
+# Ignore specific images (glob patterns, repeatable)
+dockerfile-pin check --ignore-images "scratch"
+dockerfile-pin check --ignore-images "ghcr.io/myorg/*" --ignore-images "mcr.microsoft.com/**"
 ```
 
 **Output:**
@@ -112,6 +116,42 @@ SKIP  Dockerfile:5    FROM scratch                                       scratch
 ```
 
 Exit code is `1` when any check fails (configurable with `--exit-code`).
+
+## Configuration File
+
+Create `.dockerfile-pin.yaml` (or `.dockerfile-pin.yml`) in your project root to configure ignore rules:
+
+```yaml
+# .dockerfile-pin.yaml
+ignore-images:
+  - "ghcr.io/myorg/*"                              # Ignore all images under myorg
+  - "!ghcr.io/myorg/public-*"                      # But still check public-* images
+  - "*.dkr.ecr.*.amazonaws.com/**"                  # Ignore all ECR images
+  - "mcr.microsoft.com/**"                          # Ignore all Microsoft container images
+  - "scratch"                                        # Ignore exact image name
+```
+
+Config file patterns are merged with `--ignore-images` CLI flags. CLI flags are evaluated after config file patterns, so they take precedence (last match wins).
+
+### Pattern Syntax
+
+Patterns use glob matching ([doublestar](https://github.com/bmatcuk/doublestar) syntax):
+
+| Pattern | Matches | Does not match |
+|---------|---------|----------------|
+| `scratch` | `scratch` | `scratch:latest` |
+| `node:*` | `node:20`, `node:latest` | `node:20@sha256:...` |
+| `ghcr.io/myorg/*` | `ghcr.io/myorg/app:v1` | `ghcr.io/myorg/sub/app:v1` |
+| `ghcr.io/myorg/**` | `ghcr.io/myorg/app:v1`, `ghcr.io/myorg/sub/app:v1` | `ghcr.io/other/app:v1` |
+| `*.dkr.ecr.*.amazonaws.com/*` | `123.dkr.ecr.us-east-1.amazonaws.com/app:v1` | |
+
+Negation patterns (prefixed with `!`) override previous matches:
+
+```yaml
+ignore-images:
+  - "ghcr.io/myorg/*"            # Ignore all
+  - "!ghcr.io/myorg/public-*"    # But check public-* images
+```
 
 ## Supported Patterns
 

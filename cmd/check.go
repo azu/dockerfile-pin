@@ -39,7 +39,7 @@ func init() {
 	checkCmd.Flags().StringVar(&checkGlob, "glob", "", "Glob pattern to find Dockerfiles")
 	checkCmd.Flags().BoolVar(&checkSyntaxOnly, "syntax-only", false, "Skip registry checks")
 	checkCmd.Flags().StringVar(&checkFormat, "format", "text", "Output format: text or json")
-	checkCmd.Flags().StringSliceVar(&checkIgnore, "ignore-images", nil, "Images to ignore")
+	checkCmd.Flags().StringArrayVar(&checkIgnore, "ignore-images", nil, "Images to ignore (glob patterns, repeatable)")
 	checkCmd.Flags().IntVar(&checkExitCode, "exit-code", 1, "Exit code on failure")
 	rootCmd.AddCommand(checkCmd)
 }
@@ -59,6 +59,15 @@ func runCheck(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	cfg, err := LoadConfig()
+	if err != nil {
+		return err
+	}
+	ignorePatterns := MergeIgnorePatterns(cfg.IgnoreImages, checkIgnore)
+	if err := ValidatePatterns(ignorePatterns); err != nil {
+		return err
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 	res := resolver.NewCachedResolver(&resolver.CraneResolver{})
@@ -71,11 +80,11 @@ func runCheck(cmd *cobra.Command, args []string) error {
 		var err error
 		switch DetectFileType(filePath) {
 		case FileTypeCompose:
-			fileResults, err = parseComposeForCheck(filePath, checkSyntaxOnly, checkIgnore)
+			fileResults, err = parseComposeForCheck(filePath, checkSyntaxOnly, ignorePatterns)
 		case FileTypeActions:
-			fileResults, err = parseActionsForCheck(filePath, checkSyntaxOnly, checkIgnore)
+			fileResults, err = parseActionsForCheck(filePath, checkSyntaxOnly, ignorePatterns)
 		default:
-			fileResults, err = parseDockerfileForCheck(filePath, checkSyntaxOnly, checkIgnore)
+			fileResults, err = parseDockerfileForCheck(filePath, checkSyntaxOnly, ignorePatterns)
 		}
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error processing %s: %v\n", filePath, err)
@@ -178,7 +187,7 @@ func parseDockerfileForCheck(filePath string, syntaxOnly bool, ignoreImages []st
 			})
 			continue
 		}
-		if isIgnored(inst.ImageRef, ignoreImages) {
+		if IsIgnored(inst.ImageRef, ignoreImages) {
 			results = append(results, CheckResult{
 				File: filePath, Line: inst.StartLine, Image: inst.ImageRef,
 				Status: "skip", Message: "ignored", Original: inst.Original,
@@ -228,7 +237,7 @@ func parseComposeForCheck(filePath string, syntaxOnly bool, ignoreImages []strin
 			})
 			continue
 		}
-		if isIgnored(ref.ImageRef, ignoreImages) {
+		if IsIgnored(ref.ImageRef, ignoreImages) {
 			results = append(results, CheckResult{
 				File: filePath, Line: ref.Line, Image: ref.ImageRef,
 				Status: "skip", Message: "ignored", Original: "image: " + ref.RawRef,
@@ -278,7 +287,7 @@ func parseActionsForCheck(filePath string, syntaxOnly bool, ignoreImages []strin
 			})
 			continue
 		}
-		if isIgnored(ref.ImageRef, ignoreImages) {
+		if IsIgnored(ref.ImageRef, ignoreImages) {
 			results = append(results, CheckResult{
 				File: filePath, Line: ref.Line, Image: ref.ImageRef,
 				Status: "skip", Message: "ignored", Original: original,
@@ -318,11 +327,3 @@ func actionsOriginal(ref actions.ActionsImageRef) string {
 	return ref.RawRef
 }
 
-func isIgnored(imageRef string, patterns []string) bool {
-	for _, pattern := range patterns {
-		if strings.Contains(imageRef, pattern) {
-			return true
-		}
-	}
-	return false
-}

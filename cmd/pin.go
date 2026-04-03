@@ -29,6 +29,7 @@ var (
 	runGlob     string
 	runWrite    bool
 	runUpdate   bool
+	runIgnore   []string
 )
 
 func init() {
@@ -36,6 +37,7 @@ func init() {
 	runCmd.Flags().StringVar(&runGlob, "glob", "", "Glob pattern to find Dockerfiles")
 	runCmd.Flags().BoolVar(&runWrite, "write", false, "Write changes to files (default is dry-run)")
 	runCmd.Flags().BoolVar(&runUpdate, "update", false, "Update existing digests")
+	runCmd.Flags().StringArrayVar(&runIgnore, "ignore-images", nil, "Images to ignore (glob patterns, repeatable)")
 	rootCmd.AddCommand(runCmd)
 }
 
@@ -56,6 +58,15 @@ func runRun(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	cfg, err := LoadConfig()
+	if err != nil {
+		return err
+	}
+	ignorePatterns := MergeIgnorePatterns(cfg.IgnoreImages, runIgnore)
+	if err := ValidatePatterns(ignorePatterns); err != nil {
+		return err
+	}
+
 	dryRun := !runWrite
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
@@ -67,7 +78,7 @@ func runRun(cmd *cobra.Command, args []string) error {
 	uniqueRefs := make(map[string]bool)
 
 	for _, filePath := range files {
-		pf, err := parseFile(filePath, runUpdate)
+		pf, err := parseFile(filePath, runUpdate, ignorePatterns)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error parsing %s: %v\n", filePath, err)
 			continue
@@ -102,7 +113,7 @@ func runRun(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func parseFile(filePath string, update bool) (parsedFile, error) {
+func parseFile(filePath string, update bool, ignorePatterns []string) (parsedFile, error) {
 	content, err := os.ReadFile(filePath)
 	if err != nil {
 		return parsedFile{}, fmt.Errorf("reading %s: %w", filePath, err)
@@ -122,7 +133,7 @@ func parseFile(filePath string, update bool) (parsedFile, error) {
 		}
 		pf.composeRefs = refs
 		for _, ref := range refs {
-			if ref.Skip || (ref.Digest != "" && !update) {
+			if ref.Skip || (ref.Digest != "" && !update) || IsIgnored(ref.ImageRef, ignorePatterns) {
 				continue
 			}
 			pf.imageRefs = append(pf.imageRefs, ref.ImageRef)
@@ -134,7 +145,7 @@ func parseFile(filePath string, update bool) (parsedFile, error) {
 		}
 		pf.actionsRefs = refs
 		for _, ref := range refs {
-			if ref.Skip || (ref.Digest != "" && !update) {
+			if ref.Skip || (ref.Digest != "" && !update) || IsIgnored(ref.ImageRef, ignorePatterns) {
 				continue
 			}
 			pf.imageRefs = append(pf.imageRefs, ref.ImageRef)
@@ -146,7 +157,7 @@ func parseFile(filePath string, update bool) (parsedFile, error) {
 		}
 		pf.dockerInsts = insts
 		for _, inst := range insts {
-			if inst.Skip || (inst.Digest != "" && !update) {
+			if inst.Skip || (inst.Digest != "" && !update) || IsIgnored(inst.ImageRef, ignorePatterns) {
 				continue
 			}
 			pf.imageRefs = append(pf.imageRefs, inst.ImageRef)
