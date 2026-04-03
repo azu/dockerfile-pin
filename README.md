@@ -47,9 +47,6 @@ dockerfile-pin run
 # Actually write changes to files
 dockerfile-pin run --write
 
-# Update existing digests
-dockerfile-pin run --write --update
-
 # Preview a specific file
 dockerfile-pin run -f path/to/Dockerfile
 
