@@ -66,6 +66,8 @@ dockerfile-pin run --write --update
 dockerfile-pin run --ignore-images "mcr.microsoft.com/**"
 ```
 
+#### Dockerfile
+
 **Before:**
 
 ```dockerfile
@@ -80,6 +82,80 @@ FROM scratch
 FROM node:20.11.1@sha256:e06aae17c40c7a6b5296ca6f942a02e6737ae61bbbf3e2158624bb0f887991b5
 FROM python:3.12-slim@sha256:3d5ed973e45820f5ba5e46bd065bd88b3a504ff0724d85980dcd05eab361fcf4 AS builder
 FROM scratch
+```
+
+#### docker-compose.yml
+
+**Before:**
+
+```yaml
+services:
+  web:
+    image: node:20.11.1
+    ports:
+      - "3000:3000"
+  db:
+    image: postgres:16.2
+    environment:
+      POSTGRES_PASSWORD: secret
+  app:
+    build: .
+    image: myapp:latest
+```
+
+**After:**
+
+```yaml
+services:
+  web:
+    image: node:20.11.1@sha256:e06aae17c40c7a6b5296ca6f942a02e6737ae61bbbf3e2158624bb0f887991b5
+    ports:
+      - "3000:3000"
+  db:
+    image: postgres:16.2@sha256:4aea012537edfad80f98d870a36e6b90b4c09b27be7f4b4759d72db863baeebb
+    environment:
+      POSTGRES_PASSWORD: secret
+  app:
+    build: .
+    image: myapp:latest  # skipped (has build directive)
+```
+
+#### GitHub Actions
+
+**Before:**
+
+```yaml
+name: CI
+on: push
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    container:
+      image: node:24
+    services:
+      db:
+        image: postgres:18
+    steps:
+      - uses: docker://ghcr.io/astral-sh/uv:latest
+      - uses: actions/checkout@v4
+```
+
+**After:**
+
+```yaml
+name: CI
+on: push
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    container:
+      image: node:24@sha256:bb20cf73b3ad7212834ec48e2174cdcb5775f6550510a5336b842ae32741ce6c
+    services:
+      db:
+        image: postgres:18@sha256:a9abf4275f9e99bff8e6aed712b3b7dfec9cac1341bba01c1ffdfce9ff9fc34a
+    steps:
+      - uses: docker://ghcr.io/astral-sh/uv:latest@sha256:90bbb3c16635e9627f49eec6539f956d70746c409209041800a0280b93152823
+      - uses: actions/checkout@v4  # not a Docker image, skipped
 ```
 
 ### Check
