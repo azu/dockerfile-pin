@@ -94,6 +94,38 @@ jobs:
 	}
 }
 
+func TestParse_WorkflowServiceWithDockerPrefix(t *testing.T) {
+	content := []byte(`
+name: CI
+on: push
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      db:
+        image: docker://postgres:18
+    steps:
+      - uses: actions/checkout@v4
+`)
+	refs, err := Parse(content)
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if len(refs) != 1 {
+		t.Fatalf("got %d refs, want 1", len(refs))
+	}
+	r := refs[0]
+	if r.ImageRef != "postgres:18" {
+		t.Errorf("ImageRef = %q, want %q", r.ImageRef, "postgres:18")
+	}
+	if !r.HasPrefix {
+		t.Error("HasPrefix should be true for docker:// prefixed service image")
+	}
+	if r.RawRef != "docker://postgres:18" {
+		t.Errorf("RawRef = %q, want %q", r.RawRef, "docker://postgres:18")
+	}
+}
+
 func TestParse_WorkflowDockerStep(t *testing.T) {
 	content := []byte(`
 name: CI

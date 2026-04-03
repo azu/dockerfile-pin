@@ -74,7 +74,8 @@ func parseWorkflow(jobsNode *yaml.Node) ([]ActionsImageRef, error) {
 				}
 				imageNode := findMapValue(svcVal, "image")
 				if imageNode != nil && imageNode.Kind == yaml.ScalarNode && imageNode.Value != "" {
-					ref := makeRef(imageNode.Value, imageNode.Line, false,
+					hasPrefix := strings.HasPrefix(imageNode.Value, "docker://")
+					ref := makeRef(imageNode.Value, imageNode.Line, hasPrefix,
 						"jobs."+jobName+".services."+svcKey.Value+".image")
 					refs = append(refs, ref)
 				}
