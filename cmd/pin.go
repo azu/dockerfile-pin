@@ -26,9 +26,8 @@ var runCmd = &cobra.Command{
 var (
 	runFilePath string
 	runGlob     string
-	runWrite    bool
-	runUpdate   bool
-	runPlatform string
+	runWrite  bool
+	runUpdate bool
 )
 
 func init() {
@@ -36,7 +35,6 @@ func init() {
 	runCmd.Flags().StringVar(&runGlob, "glob", "", "Glob pattern to find Dockerfiles")
 	runCmd.Flags().BoolVar(&runWrite, "write", false, "Write changes to files (default is dry-run)")
 	runCmd.Flags().BoolVar(&runUpdate, "update", false, "Update existing digests")
-	runCmd.Flags().StringVar(&runPlatform, "platform", "", "Platform for multi-arch images (e.g., linux/amd64)")
 	rootCmd.AddCommand(runCmd)
 }
 
