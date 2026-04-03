@@ -1,6 +1,6 @@
 # dockerfile-pin
 
-A CLI tool that adds `@sha256:<digest>` to `FROM` lines in Dockerfiles and `image` fields in docker-compose.yml to prevent supply chain attacks.
+A CLI tool that adds `@sha256:<digest>` to `FROM` lines in Dockerfiles, `image` fields in docker-compose.yml, and Docker image references in GitHub Actions files to prevent supply chain attacks.
 
 ## Install
 
@@ -37,7 +37,7 @@ See [GitHub Releases](https://github.com/azu/dockerfile-pin/releases) for all pl
 
 ### Run
 
-Add digests to Dockerfile `FROM` lines or docker-compose.yml `image` fields.
+Add digests to Dockerfile `FROM` lines, docker-compose.yml `image` fields, and GitHub Actions Docker image references.
 By default, shows changes without modifying files (dry-run).
 
 ```bash
@@ -139,6 +139,23 @@ Exit code is `1` when any check fails (configurable with `--exit-code`).
 | Service with `build:` directive | Skipped |
 | Service without `image:` key | Skipped |
 
+### GitHub Actions workflow files (`.github/workflows/*.yml`)
+
+| Pattern | Supported |
+|---------|-----------|
+| `jobs.<id>.container.image: node:20` | Yes |
+| `jobs.<id>.container: node:20` (string shorthand) | Yes |
+| `jobs.<id>.services.<id>.image: postgres:16` | Yes |
+| `jobs.<id>.steps[*].uses: docker://image:tag` | Yes |
+| `jobs.<id>.steps[*].uses: actions/checkout@v4` | Skipped (not a Docker image) |
+
+### GitHub Actions action files (`action.yml`)
+
+| Pattern | Supported |
+|---------|-----------|
+| `runs.image: 'docker://debian:stretch-slim'` | Yes |
+| `runs.image: 'Dockerfile'` | Skipped (local Dockerfile) |
+
 ## CI Integration
 
 ### Check (PR validation)
@@ -182,13 +199,13 @@ jobs:
 `dockerfile-pin check` exits with code 1 if any image is missing a digest.
 
 When `-f` and `--glob` are omitted, it auto-detects target files using `git ls-files` filtered by the default glob pattern:
-`**/{Dockerfile,Dockerfile.*,docker-compose*.yml,docker-compose*.yaml,compose.yml,compose.yaml}`
+`**/{Dockerfile,Dockerfile.*,docker-compose*.yml,docker-compose*.yaml,compose.yml,compose.yaml,action.yml,action.yaml,.github/workflows/*.yml,.github/workflows/*.yaml}`
 
 Outside a git repository, it falls back to the same glob pattern with common directories (`node_modules`, `vendor`) excluded.
 
 ### Pin (migration)
 
-Run locally to add digests to all Dockerfiles and compose files:
+Run locally to add digests to all Dockerfiles, compose files, and GitHub Actions files:
 
 ```bash
 # Preview changes
