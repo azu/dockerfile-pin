@@ -26,8 +26,8 @@ var runCmd = &cobra.Command{
 var (
 	runFilePath string
 	runGlob     string
-	runWrite  bool
-	runUpdate bool
+	runWrite    bool
+	runUpdate   bool
 )
 
 func init() {
