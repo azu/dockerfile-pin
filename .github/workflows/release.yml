@@ -67,12 +67,19 @@ jobs:
           go-version-file: go.mod
           cache: false
 
+      - name: Write release notes from PR body
+        if: steps.check_tag.outputs.exists == 'false'
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          echo "$PR_BODY" > /tmp/release-notes.md
+
       - uses: goreleaser/goreleaser-action@ec59f474b9834571250b370d4735c50f8e2d1e29 # v7.0.0
         if: steps.check_tag.outputs.exists == 'false'
         id: goreleaser
         with:
           version: "~> v2"
-          args: release --clean
+          args: release --clean --release-notes /tmp/release-notes.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
