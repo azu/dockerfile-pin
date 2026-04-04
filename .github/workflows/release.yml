@@ -72,7 +72,7 @@ jobs:
         env:
           PR_BODY: ${{ github.event.pull_request.body }}
         run: |
-          echo "$PR_BODY" > /tmp/release-notes.md
+          printenv PR_BODY > /tmp/release-notes.md
 
       - uses: goreleaser/goreleaser-action@ec59f474b9834571250b370d4735c50f8e2d1e29 # v7.0.0
         if: steps.check_tag.outputs.exists == 'false'
