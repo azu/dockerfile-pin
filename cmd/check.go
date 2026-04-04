@@ -20,9 +20,38 @@ import (
 var checkCmd = &cobra.Command{
 	Use:   "check",
 	Short: "Check if FROM images are pinned to digests",
-	Long:  "Validate that Dockerfile FROM lines have @sha256:<digest> and that digests exist in the registry.",
-	Args:  cobra.NoArgs,
-	RunE:  runCheck,
+	Long: `Validate that every Docker image reference has a @sha256:<digest> and that the
+digest exists in the registry.
+
+Each image is reported as one of:
+  OK     digest present and verified in registry
+  FAIL   missing digest, or digest not found in registry
+  SKIP   scratch, multi-stage ref, ignored, or non-Docker uses
+  WARN   registry check failed (network error, auth issue, etc.)
+
+Exit code is 1 (configurable with --exit-code) when any image has FAIL status.
+Use --syntax-only to skip registry verification (only checks digest presence).
+Use --format json for machine-readable output (array of objects with
+file, line, image, status, message, original fields).`,
+	Example: `  # Check auto-detected files
+  dockerfile-pin check
+
+  # Check a specific file
+  dockerfile-pin check -f Dockerfile
+
+  # Check multiple files
+  dockerfile-pin check --glob '**/{Dockerfile,docker-compose.yml}'
+
+  # Syntax only (no network, fast)
+  dockerfile-pin check --syntax-only
+
+  # JSON output for CI integration
+  dockerfile-pin check --format json
+
+  # Ignore specific images
+  dockerfile-pin check --ignore-images "scratch" --ignore-images "ghcr.io/myorg/*"`,
+	Args: cobra.NoArgs,
+	RunE: runCheck,
 }
 
 var (

@@ -19,9 +19,41 @@ import (
 var runCmd = &cobra.Command{
 	Use:   "run",
 	Short: "Pin FROM images to their digests",
-	Long:  "Parse Dockerfile FROM lines and add @sha256:<digest> to each image reference.\nBy default, shows changes without writing files (dry-run). Use --write to apply changes.",
-	Args:  cobra.NoArgs,
-	RunE:  runRun,
+	Long: `Resolve image tags to sha256 digests and add @sha256:<digest> to each reference.
+By default, prints the rewritten file to stdout without modifying it (dry-run).
+Use --write to apply changes in place.
+
+Supports Dockerfiles, docker-compose.yml/compose.yaml, GitHub Actions workflows,
+and action.yml files. File type is detected from filename.
+
+Skipped automatically:
+  - "FROM scratch" (no registry image)
+  - Multi-stage references ("FROM builder")
+  - ARG-only base images with no default value
+  - Compose services with a "build:" directive
+  - Non-docker "uses:" in GitHub Actions (e.g., actions/checkout@v4)
+  - Already-pinned images (use --update to re-resolve)
+
+Digests are resolved via HEAD requests and do not count against Docker Hub pull limits.`,
+	Example: `  # Preview changes for auto-detected files
+  dockerfile-pin run
+
+  # Apply changes
+  dockerfile-pin run --write
+
+  # Pin a specific file
+  dockerfile-pin run -f path/to/Dockerfile --write
+
+  # Pin all Dockerfiles and compose files
+  dockerfile-pin run --glob '**/{Dockerfile,docker-compose.yml}' --write
+
+  # Re-resolve existing digests (tag unchanged, digest updated)
+  dockerfile-pin run --write --update
+
+  # Ignore private registry images
+  dockerfile-pin run --ignore-images "*.dkr.ecr.*.amazonaws.com/**"`,
+	Args: cobra.NoArgs,
+	RunE: runRun,
 }
 
 var (
