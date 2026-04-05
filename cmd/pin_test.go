@@ -101,8 +101,8 @@ func TestResolveParallel_ShortDigestNoPanic(t *testing.T) {
 	// A very short digest (fewer than 19 chars) must not cause an index-out-of-range panic.
 	short := &resolver.MockResolver{
 		Digests: map[string]string{
-			"tiny:1": "sha256:ab",  // only 10 chars — well under 19
-			"tiny:2": "",           // zero-length edge case
+			"tiny:1": "sha256:ab", // only 10 chars — well under 19
+			"tiny:2": "",          // zero-length edge case
 		},
 	}
 	ctx := context.Background()
