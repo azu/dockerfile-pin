@@ -85,10 +85,11 @@ func (r *CachedResolver) Resolve(ctx context.Context, imageRef string) (string, 
 	}
 
 	digest, err := r.inner.Resolve(ctx, imageRef)
-
-	r.mu.Lock()
-	r.resolveCache[imageRef] = resolveEntry{digest: digest, err: err}
-	r.mu.Unlock()
+	if err == nil {
+		r.mu.Lock()
+		r.resolveCache[imageRef] = resolveEntry{digest: digest}
+		r.mu.Unlock()
+	}
 
 	return digest, err
 }
@@ -102,10 +103,11 @@ func (r *CachedResolver) Exists(ctx context.Context, imageRef string) (bool, err
 	}
 
 	exists, err := r.inner.Exists(ctx, imageRef)
-
-	r.mu.Lock()
-	r.existsCache[imageRef] = existsEntry{exists: exists, err: err}
-	r.mu.Unlock()
+	if err == nil {
+		r.mu.Lock()
+		r.existsCache[imageRef] = existsEntry{exists: exists}
+		r.mu.Unlock()
+	}
 
 	return exists, err
 }
