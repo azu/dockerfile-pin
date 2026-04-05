@@ -2,8 +2,103 @@ package resolver
 
 import (
 	"context"
+	"errors"
 	"testing"
 )
+
+// failingResolver returns an error for the first `failCount` calls to Resolve/Exists,
+// then returns the configured digest/exists value.
+type failingResolver struct {
+	resolveCalls int
+	existsCalls  int
+	failCount    int
+	digest       string
+}
+
+func (r *failingResolver) Resolve(_ context.Context, _ string) (string, error) {
+	r.resolveCalls++
+	if r.resolveCalls <= r.failCount {
+		return "", errors.New("transient network error")
+	}
+	return r.digest, nil
+}
+
+func (r *failingResolver) Exists(_ context.Context, _ string) (bool, error) {
+	r.existsCalls++
+	if r.existsCalls <= r.failCount {
+		return false, errors.New("transient network error")
+	}
+	return true, nil
+}
+
+// TestCachedResolver_DoesNotCacheResolveErrors verifies that a transient error from
+// Resolve is not stored in the cache so the next call retries the inner resolver.
+func TestCachedResolver_DoesNotCacheResolveErrors(t *testing.T) {
+	inner := &failingResolver{failCount: 1, digest: "sha256:abc123"}
+	cached := NewCachedResolver(inner)
+	ctx := context.Background()
+
+	// First call: inner fails — should propagate the error.
+	_, err := cached.Resolve(ctx, "node:20")
+	if err == nil {
+		t.Fatal("expected error on first call, got nil")
+	}
+
+	// Second call: inner succeeds now — must NOT be short-circuited by a cached error.
+	digest, err := cached.Resolve(ctx, "node:20")
+	if err != nil {
+		t.Fatalf("expected success on second call, got: %v", err)
+	}
+	if digest != "sha256:abc123" {
+		t.Errorf("expected sha256:abc123, got %q", digest)
+	}
+
+	// Third call: result is now cached; inner must not be called again.
+	callsBefore := inner.resolveCalls
+	digest2, err := cached.Resolve(ctx, "node:20")
+	if err != nil {
+		t.Fatalf("unexpected error on third call: %v", err)
+	}
+	if digest2 != digest {
+		t.Errorf("expected same cached digest, got %q", digest2)
+	}
+	if inner.resolveCalls != callsBefore {
+		t.Errorf("inner called %d extra times, want 0", inner.resolveCalls-callsBefore)
+	}
+}
+
+// TestCachedResolver_DoesNotCacheExistsErrors verifies that a transient error from
+// Exists is not stored in the cache so the next call retries the inner resolver.
+func TestCachedResolver_DoesNotCacheExistsErrors(t *testing.T) {
+	inner := &failingResolver{failCount: 1}
+	cached := NewCachedResolver(inner)
+	ctx := context.Background()
+
+	// First call: inner fails — should propagate the error.
+	_, err := cached.Exists(ctx, "node:20")
+	if err == nil {
+		t.Fatal("expected error on first call, got nil")
+	}
+
+	// Second call: inner succeeds now — must NOT be short-circuited by a cached error.
+	exists, err := cached.Exists(ctx, "node:20")
+	if err != nil {
+		t.Fatalf("expected success on second call, got: %v", err)
+	}
+	if !exists {
+		t.Error("expected exists=true on second call")
+	}
+
+	// Third call: result is now cached; inner must not be called again.
+	callsBefore := inner.existsCalls
+	_, err = cached.Exists(ctx, "node:20")
+	if err != nil {
+		t.Fatalf("unexpected error on third call: %v", err)
+	}
+	if inner.existsCalls != callsBefore {
+		t.Errorf("inner called %d extra times, want 0", inner.existsCalls-callsBefore)
+	}
+}
 
 func TestMockResolver_Resolve(t *testing.T) {
 	mock := &MockResolver{
