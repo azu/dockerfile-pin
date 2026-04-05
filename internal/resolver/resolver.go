@@ -2,13 +2,16 @@ package resolver
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
 	"sync"
 	"time"
 
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
+	"github.com/google/go-containerregistry/pkg/v1/remote/transport"
 )
 
 type DigestResolver interface {
@@ -43,7 +46,14 @@ func (r *CraneResolver) Exists(ctx context.Context, imageRef string) (bool, erro
 	defer cancel()
 	_, err = remote.Head(ref, remote.WithAuthFromKeychain(authn.DefaultKeychain), remote.WithContext(reqCtx))
 	if err != nil {
-		return false, nil
+		// A 404 means the image genuinely does not exist — return false without error.
+		var te *transport.Error
+		if errors.As(err, &te) && te.StatusCode == http.StatusNotFound {
+			return false, nil
+		}
+		// Any other error (network timeout, auth failure, etc.) is transient
+		// and must be propagated so CachedResolver does not cache a false negative.
+		return false, fmt.Errorf("checking existence of %q: %w", imageRef, err)
 	}
 	return true, nil
 }
@@ -85,10 +95,11 @@ func (r *CachedResolver) Resolve(ctx context.Context, imageRef string) (string, 
 	}
 
 	digest, err := r.inner.Resolve(ctx, imageRef)
-
-	r.mu.Lock()
-	r.resolveCache[imageRef] = resolveEntry{digest: digest, err: err}
-	r.mu.Unlock()
+	if err == nil {
+		r.mu.Lock()
+		r.resolveCache[imageRef] = resolveEntry{digest: digest}
+		r.mu.Unlock()
+	}
 
 	return digest, err
 }
@@ -102,10 +113,11 @@ func (r *CachedResolver) Exists(ctx context.Context, imageRef string) (bool, err
 	}
 
 	exists, err := r.inner.Exists(ctx, imageRef)
-
-	r.mu.Lock()
-	r.existsCache[imageRef] = existsEntry{exists: exists, err: err}
-	r.mu.Unlock()
+	if err == nil {
+		r.mu.Lock()
+		r.existsCache[imageRef] = existsEntry{exists: exists}
+		r.mu.Unlock()
+	}
 
 	return exists, err
 }

@@ -218,13 +218,23 @@ func resolveParallel(ctx context.Context, res resolver.DigestResolver, refs []st
 				fmt.Fprintf(os.Stderr, "WARN  %s  failed to resolve: %v\n", imageRef, err)
 			} else {
 				results[imageRef] = digest
-				fmt.Printf("  resolved %s → %s\n", imageRef, digest[:19])
+				fmt.Printf("  resolved %s → %s\n", imageRef, digest[:min(19, len(digest))])
 			}
 			mu.Unlock()
 		}(ref)
 	}
 	wg.Wait()
 	return results
+}
+
+// writeFilePreservingPerms writes data to path using the file's existing permissions,
+// falling back to 0644 if the permissions cannot be read.
+func writeFilePreservingPerms(path string, data []byte) error {
+	perm := os.FileMode(0644)
+	if fi, err := os.Stat(path); err == nil {
+		perm = fi.Mode().Perm()
+	}
+	return os.WriteFile(path, data, perm)
 }
 
 func applyDockerfile(pf parsedFile, digestMap map[string]string, dryRun bool, update bool) {
@@ -246,7 +256,7 @@ func applyDockerfile(pf parsedFile, digestMap map[string]string, dryRun bool, up
 		fmt.Print(result)
 		return
 	}
-	if err := os.WriteFile(pf.path, []byte(result), 0644); err != nil {
+	if err := writeFilePreservingPerms(pf.path, []byte(result)); err != nil {
 		fmt.Fprintf(os.Stderr, "error writing %s: %v\n", pf.path, err)
 		return
 	}
@@ -272,7 +282,7 @@ func applyActions(pf parsedFile, digestMap map[string]string, dryRun bool, updat
 		fmt.Print(result)
 		return
 	}
-	if err := os.WriteFile(pf.path, []byte(result), 0644); err != nil {
+	if err := writeFilePreservingPerms(pf.path, []byte(result)); err != nil {
 		fmt.Fprintf(os.Stderr, "error writing %s: %v\n", pf.path, err)
 		return
 	}
@@ -298,7 +308,7 @@ func applyCompose(pf parsedFile, digestMap map[string]string, dryRun bool, updat
 		fmt.Print(result)
 		return
 	}
-	if err := os.WriteFile(pf.path, []byte(result), 0644); err != nil {
+	if err := writeFilePreservingPerms(pf.path, []byte(result)); err != nil {
 		fmt.Fprintf(os.Stderr, "error writing %s: %v\n", pf.path, err)
 		return
 	}
