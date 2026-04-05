@@ -148,6 +148,28 @@ func TestWriteFilePreservingPerms(t *testing.T) {
 	}
 }
 
+// TestWriteFilePreservingPerms_FallbackForNewFile verifies that when the target
+// file does not exist, writeFilePreservingPerms falls back to 0644.
+func TestWriteFilePreservingPerms_FallbackForNewFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "newfile")
+
+	if err := writeFilePreservingPerms(path, []byte("hello")); err != nil {
+		t.Fatalf("writeFilePreservingPerms() error = %v", err)
+	}
+	fi, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := fi.Mode().Perm(); got != 0644 {
+		t.Errorf("new file permissions: got %04o, want 0644", got)
+	}
+	content, _ := os.ReadFile(path)
+	if string(content) != "hello" {
+		t.Errorf("content mismatch: got %q", string(content))
+	}
+}
+
 // TestApplyDockerfile_PreservesFilePermissions verifies that applyDockerfile
 // does not overwrite the original file permissions with a hardcoded value.
 func TestApplyDockerfile_PreservesFilePermissions(t *testing.T) {
