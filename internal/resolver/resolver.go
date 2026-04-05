@@ -2,13 +2,16 @@ package resolver
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
 	"sync"
 	"time"
 
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
+	"github.com/google/go-containerregistry/pkg/v1/remote/transport"
 )
 
 type DigestResolver interface {
@@ -43,7 +46,14 @@ func (r *CraneResolver) Exists(ctx context.Context, imageRef string) (bool, erro
 	defer cancel()
 	_, err = remote.Head(ref, remote.WithAuthFromKeychain(authn.DefaultKeychain), remote.WithContext(reqCtx))
 	if err != nil {
-		return false, nil
+		// A 404 means the image genuinely does not exist — return false without error.
+		var te *transport.Error
+		if errors.As(err, &te) && te.StatusCode == http.StatusNotFound {
+			return false, nil
+		}
+		// Any other error (network timeout, auth failure, etc.) is transient
+		// and must be propagated so CachedResolver does not cache a false negative.
+		return false, fmt.Errorf("checking existence of %q: %w", imageRef, err)
 	}
 	return true, nil
 }
