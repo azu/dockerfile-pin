@@ -31,6 +31,16 @@ aqua exec -- dockerfile-pin --help
 go install github.com/azu/dockerfile-pin@latest
 ```
 
+### Nix
+
+```bash
+# Run without installing
+nix run github:azu/dockerfile-pin -- --help
+
+# Install into profile
+nix profile install github:azu/dockerfile-pin
+```
+
 See [GitHub Releases](https://github.com/azu/dockerfile-pin/releases) for all platforms.
 
 ## Usage
