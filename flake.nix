@@ -16,11 +16,14 @@
       ];
       forAllSystems = f: nixpkgs.lib.genAttrs systems (system: f nixpkgs.legacyPackages.${system});
     in
+    let
+      version = self.shortRev or "dev";
+    in
     {
       packages = forAllSystems (pkgs: {
-        dockerfile-pin = pkgs.buildGoModule rec {
+        dockerfile-pin = pkgs.buildGoModule {
           pname = "dockerfile-pin";
-          version = "1.2.2";
+          inherit version;
           src = ./.;
           vendorHash = "sha256-CgMFIYoM+nWiZ5NXtTlXHhrjzVYxoVg0YVpQq3LLrjI=";
 
@@ -30,7 +33,6 @@
           ldflags = [
             "-s"
             "-w"
-            "-X github.com/azu/dockerfile-pin/cmd.version=${version}"
           ];
 
           meta = {
