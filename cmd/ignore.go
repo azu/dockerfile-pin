@@ -13,6 +13,7 @@ import (
 // Config represents .dockerfile-pin.yaml configuration.
 type Config struct {
 	IgnoreImages []string `yaml:"ignore-images"`
+	MinAge       *int     `yaml:"min-age,omitempty"`
 }
 
 // configFileNames is the list of config file names to search for.

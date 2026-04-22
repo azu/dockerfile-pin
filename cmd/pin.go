@@ -61,6 +61,7 @@ var (
 	runGlob     string
 	runWrite    bool
 	runUpdate   bool
+	runMinAge   int
 	runIgnore   []string
 )
 
@@ -68,7 +69,8 @@ func init() {
 	runCmd.Flags().StringVarP(&runFilePath, "file", "f", "", "Dockerfile path (default: auto-detect)")
 	runCmd.Flags().StringVar(&runGlob, "glob", "", "Glob pattern to find Dockerfiles")
 	runCmd.Flags().BoolVar(&runWrite, "write", false, "Write changes to files (default is dry-run)")
-	runCmd.Flags().BoolVar(&runUpdate, "update", false, "Update existing digests")
+	runCmd.Flags().BoolVarP(&runUpdate, "update", "u", false, "Update existing digests")
+	runCmd.Flags().IntVar(&runMinAge, "min-age", 0, "Skip images built within the specified number of days")
 	runCmd.Flags().StringArrayVar(&runIgnore, "ignore-images", nil, "Images to ignore (glob patterns, repeatable)")
 	rootCmd.AddCommand(runCmd)
 }
@@ -97,6 +99,14 @@ func runRun(cmd *cobra.Command, args []string) error {
 	ignorePatterns := MergeIgnorePatterns(cfg.IgnoreImages, runIgnore)
 	if err := ValidatePatterns(ignorePatterns); err != nil {
 		return err
+	}
+
+	minAge := runMinAge
+	if !cmd.Flags().Changed("min-age") && cfg.MinAge != nil {
+		minAge = *cfg.MinAge
+	}
+	if minAge < 0 {
+		return fmt.Errorf("--min-age must be a non-negative integer")
 	}
 
 	dryRun := !runWrite
@@ -129,7 +139,7 @@ func runRun(cmd *cobra.Command, args []string) error {
 	fmt.Printf("resolving %d unique image(s)...\n", len(refs))
 
 	res := &resolver.CraneResolver{}
-	digestMap := resolveParallel(ctx, res, refs)
+	digestMap := resolveParallel(ctx, res, refs, minAge)
 
 	// Phase 3: Apply digests and output results
 	for _, pf := range parsed {
@@ -199,11 +209,17 @@ func parseFile(filePath string, update bool, ignorePatterns []string) (parsedFil
 }
 
 // resolveParallel resolves digests for all image refs concurrently.
-func resolveParallel(ctx context.Context, res resolver.DigestResolver, refs []string) map[string]string {
+// When minAge > 0, uses a combined resolve+age-check to avoid redundant HEAD requests.
+func resolveParallel(ctx context.Context, res resolver.DigestResolver, refs []string, minAge int) map[string]string {
 	results := make(map[string]string)
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, runtime.NumCPU()*2)
+
+	var cutoff time.Time
+	if minAge > 0 {
+		cutoff = time.Now().AddDate(0, 0, -minAge)
+	}
 
 	for _, ref := range refs {
 		wg.Add(1)
@@ -212,14 +228,39 @@ func resolveParallel(ctx context.Context, res resolver.DigestResolver, refs []st
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			digest, err := res.Resolve(ctx, imageRef)
-			mu.Lock()
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "WARN  %s  failed to resolve: %v\n", imageRef, err)
+			var digest string
+
+			if !cutoff.IsZero() {
+				// Combined resolve+age-check via remote.Image (avoids extra HEAD request)
+				d, created, err := resolver.ResolveWithCreatedTime(ctx, imageRef)
+				if err != nil {
+					mu.Lock()
+					fmt.Fprintf(os.Stderr, "WARN  %s  failed to resolve: %v\n", imageRef, err)
+					mu.Unlock()
+					return
+				}
+				if !created.IsZero() && created.After(cutoff) {
+					mu.Lock()
+					fmt.Printf("  skipped %s (built %s, within %d days)\n", imageRef, created.Format("2006-01-02"), minAge)
+					mu.Unlock()
+					return
+				}
+				digest = d
 			} else {
-				results[imageRef] = digest
-				fmt.Printf("  resolved %s → %s\n", imageRef, digest[:min(19, len(digest))])
+				// HEAD-only resolve (cheapest)
+				d, err := res.Resolve(ctx, imageRef)
+				if err != nil {
+					mu.Lock()
+					fmt.Fprintf(os.Stderr, "WARN  %s  failed to resolve: %v\n", imageRef, err)
+					mu.Unlock()
+					return
+				}
+				digest = d
 			}
+
+			mu.Lock()
+			results[imageRef] = digest
+			fmt.Printf("  resolved %s → %s\n", imageRef, digest[:min(19, len(digest))])
 			mu.Unlock()
 		}(ref)
 	}
