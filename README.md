@@ -61,6 +61,12 @@ dockerfile-pin run --glob '**/{Dockerfile,Dockerfile.*,docker-compose.yml,compos
 
 # Ignore specific images (glob patterns, repeatable)
 dockerfile-pin run --ignore-images "mcr.microsoft.com/**"
+
+# Re-resolve existing digests
+dockerfile-pin run --write --update
+
+# Skip images built within the last 7 days
+dockerfile-pin run --write --update --min-age 7
 ```
 
 #### Dockerfile
@@ -196,12 +202,13 @@ Create `.dockerfile-pin.yaml` (or `.dockerfile-pin.yml`) in your project root to
 
 ```yaml
 # .dockerfile-pin.yaml
+min-age: 7                                         # Skip images built within the last 7 days
 ignore-images:
   - "ghcr.io/myorg/*"                              # Ignore all images under myorg
   - "!ghcr.io/myorg/public-*"                      # But still check public-* images
-  - "*.dkr.ecr.*.amazonaws.com/**"                  # Ignore all ECR images
-  - "mcr.microsoft.com/**"                          # Ignore all Microsoft container images
-  - "scratch"                                        # Ignore exact image name
+  - "*.dkr.ecr.*.amazonaws.com/**"                 # Ignore all ECR images
+  - "mcr.microsoft.com/**"                         # Ignore all Microsoft container images
+  - "scratch"                                      # Ignore exact image name
 ```
 
 Config file patterns are merged with `--ignore-images` CLI flags. CLI flags are evaluated after config file patterns, so they take precedence (last match wins).
@@ -360,12 +367,32 @@ For private registries (GCR, GHCR, ECR), configure Docker credentials before run
 
 ## Digest Updates
 
-`--update` re-resolves each tag against the registry and replaces the existing digest with the current digest of that tag. The tag itself is not changed.
+`--update` (`-u`) re-resolves each tag against the registry and replaces the existing digest with the current digest of that tag. The tag itself is not changed.
 
 ```bash
 # Re-resolve all pinned digests from the registry
 dockerfile-pin run --write --update
 ```
+
+### `--min-age`
+
+`--min-age N` skips images whose build date is within the last N days. This acts as a cooldown period — only pin to images that have been stable for at least N days.
+
+```bash
+# Skip images built within the last 7 days
+dockerfile-pin run --write --update --min-age 7
+```
+
+The build date is read from the image's OCI config (`Created` field). Images with no creation timestamp (e.g., reproducible builds) are not skipped.
+
+`--min-age` can also be set in the configuration file:
+
+```yaml
+# .dockerfile-pin.yaml
+min-age: 7
+```
+
+CLI flag takes precedence over the configuration file value.
 
 For automated ongoing digest updates, use [Renovate](https://docs.renovatebot.com/docker/) which understands the `image:tag@sha256:digest` format.
 
