@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -283,11 +284,11 @@ func TestApplyCompose_PreservesFilePermissions(t *testing.T) {
 }
 
 func TestResolveParallel_MinAge_SkipsTooNew(t *testing.T) {
-	original := resolver.ResolveWithCreatedTime
-	defer func() { resolver.ResolveWithCreatedTime = original }()
+	original := resolver.GetImageCreatedTime
+	defer func() { resolver.GetImageCreatedTime = original }()
 
-	resolver.ResolveWithCreatedTime = func(_ context.Context, _ string) (string, time.Time, error) {
-		return "sha256:abc123", time.Now().Add(-2 * 24 * time.Hour), nil // 2 days ago
+	resolver.GetImageCreatedTime = func(_ context.Context, _ string) (time.Time, error) {
+		return time.Now().Add(-2 * 24 * time.Hour), nil // 2 days ago
 	}
 
 	mock := &resolver.MockResolver{
@@ -300,11 +301,11 @@ func TestResolveParallel_MinAge_SkipsTooNew(t *testing.T) {
 }
 
 func TestResolveParallel_MinAge_AllowsOldEnough(t *testing.T) {
-	original := resolver.ResolveWithCreatedTime
-	defer func() { resolver.ResolveWithCreatedTime = original }()
+	original := resolver.GetImageCreatedTime
+	defer func() { resolver.GetImageCreatedTime = original }()
 
-	resolver.ResolveWithCreatedTime = func(_ context.Context, _ string) (string, time.Time, error) {
-		return "sha256:abc123", time.Now().Add(-10 * 24 * time.Hour), nil // 10 days ago
+	resolver.GetImageCreatedTime = func(_ context.Context, _ string) (time.Time, error) {
+		return time.Now().Add(-10 * 24 * time.Hour), nil // 10 days ago
 	}
 
 	mock := &resolver.MockResolver{
@@ -317,11 +318,11 @@ func TestResolveParallel_MinAge_AllowsOldEnough(t *testing.T) {
 }
 
 func TestResolveParallel_MinAge_ZeroCreatedAllowed(t *testing.T) {
-	original := resolver.ResolveWithCreatedTime
-	defer func() { resolver.ResolveWithCreatedTime = original }()
+	original := resolver.GetImageCreatedTime
+	defer func() { resolver.GetImageCreatedTime = original }()
 
-	resolver.ResolveWithCreatedTime = func(_ context.Context, _ string) (string, time.Time, error) {
-		return "sha256:abc123", time.Time{}, nil // zero value (reproducible build)
+	resolver.GetImageCreatedTime = func(_ context.Context, _ string) (time.Time, error) {
+		return time.Time{}, nil // zero value (reproducible build)
 	}
 
 	mock := &resolver.MockResolver{
@@ -334,13 +335,13 @@ func TestResolveParallel_MinAge_ZeroCreatedAllowed(t *testing.T) {
 }
 
 func TestResolveParallel_MinAge_ZeroDisabled(t *testing.T) {
-	original := resolver.ResolveWithCreatedTime
-	defer func() { resolver.ResolveWithCreatedTime = original }()
+	original := resolver.GetImageCreatedTime
+	defer func() { resolver.GetImageCreatedTime = original }()
 
 	called := false
-	resolver.ResolveWithCreatedTime = func(_ context.Context, _ string) (string, time.Time, error) {
+	resolver.GetImageCreatedTime = func(_ context.Context, _ string) (time.Time, error) {
 		called = true
-		return "sha256:abc123", time.Now(), nil
+		return time.Now(), nil
 	}
 
 	mock := &resolver.MockResolver{
@@ -348,9 +349,26 @@ func TestResolveParallel_MinAge_ZeroDisabled(t *testing.T) {
 	}
 	results := resolveParallel(context.Background(), mock, []string{"node:20"}, 0)
 	if called {
-		t.Error("ResolveWithCreatedTime should not be called when minAge is 0")
+		t.Error("GetImageCreatedTime should not be called when minAge is 0")
 	}
 	if results["node:20"] != "sha256:abc123" {
 		t.Errorf("expected node:20 to be resolved, got %q", results["node:20"])
+	}
+}
+
+func TestResolveParallel_MinAge_CreatedTimeErrorPinsAnyway(t *testing.T) {
+	original := resolver.GetImageCreatedTime
+	defer func() { resolver.GetImageCreatedTime = original }()
+
+	resolver.GetImageCreatedTime = func(_ context.Context, _ string) (time.Time, error) {
+		return time.Time{}, fmt.Errorf("network error")
+	}
+
+	mock := &resolver.MockResolver{
+		Digests: map[string]string{"node:20": "sha256:abc123"},
+	}
+	results := resolveParallel(context.Background(), mock, []string{"node:20"}, 7)
+	if results["node:20"] != "sha256:abc123" {
+		t.Errorf("expected node:20 to be pinned despite age-check failure, got %q", results["node:20"])
 	}
 }

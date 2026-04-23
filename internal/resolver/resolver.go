@@ -122,33 +122,27 @@ func (r *CachedResolver) Exists(ctx context.Context, imageRef string) (bool, err
 	return exists, err
 }
 
-// ResolveWithCreatedTime resolves the digest and creation time of an image in a single
-// remote.Image call, avoiding the extra HEAD request that a separate Resolve + age check would require.
-// Returns zero time.Time for created if the image config has no creation timestamp.
+// GetImageCreatedTime retrieves the creation time of a container image from its config.
+// Returns zero time.Time if the image config has no creation timestamp (e.g., reproducible builds).
 // This is a package-level variable so it can be replaced in tests.
-var ResolveWithCreatedTime = resolveWithCreatedTime
+var GetImageCreatedTime = getImageCreatedTime
 
-func resolveWithCreatedTime(ctx context.Context, imageRef string) (string, time.Time, error) {
+func getImageCreatedTime(ctx context.Context, imageRef string) (time.Time, error) {
 	ref, err := name.ParseReference(imageRef)
 	if err != nil {
-		return "", time.Time{}, fmt.Errorf("parsing reference %q: %w", imageRef, err)
+		return time.Time{}, fmt.Errorf("parsing reference %q: %w", imageRef, err)
 	}
 	reqCtx, cancel := context.WithTimeout(ctx, perRequestTimeout)
 	defer cancel()
 	img, err := remote.Image(ref, remote.WithAuthFromKeychain(authn.DefaultKeychain), remote.WithContext(reqCtx))
 	if err != nil {
-		return "", time.Time{}, fmt.Errorf("fetching image %q: %w", imageRef, err)
-	}
-	digest, err := img.Digest()
-	if err != nil {
-		return "", time.Time{}, fmt.Errorf("reading digest for %q: %w", imageRef, err)
+		return time.Time{}, fmt.Errorf("fetching image %q: %w", imageRef, err)
 	}
 	cfg, err := img.ConfigFile()
 	if err != nil {
-		// Digest is available but config failed — return digest with zero time
-		return digest.String(), time.Time{}, nil
+		return time.Time{}, fmt.Errorf("reading config for %q: %w", imageRef, err)
 	}
-	return digest.String(), cfg.Created.Time, nil
+	return cfg.Created.Time, nil
 }
 
 type MockResolver struct {

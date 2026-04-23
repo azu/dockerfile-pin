@@ -209,7 +209,7 @@ func parseFile(filePath string, update bool, ignorePatterns []string) (parsedFil
 }
 
 // resolveParallel resolves digests for all image refs concurrently.
-// When minAge > 0, uses a combined resolve+age-check to avoid redundant HEAD requests.
+// When minAge > 0, images built within the last minAge days are skipped.
 func resolveParallel(ctx context.Context, res resolver.DigestResolver, refs []string, minAge int) map[string]string {
 	results := make(map[string]string)
 	var mu sync.Mutex
@@ -228,34 +228,26 @@ func resolveParallel(ctx context.Context, res resolver.DigestResolver, refs []st
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			var digest string
+			digest, err := res.Resolve(ctx, imageRef)
+			if err != nil {
+				mu.Lock()
+				fmt.Fprintf(os.Stderr, "WARN  %s  failed to resolve: %v\n", imageRef, err)
+				mu.Unlock()
+				return
+			}
 
 			if !cutoff.IsZero() {
-				// Combined resolve+age-check via remote.Image (avoids extra HEAD request)
-				d, created, err := resolver.ResolveWithCreatedTime(ctx, imageRef)
+				created, err := resolver.GetImageCreatedTime(ctx, imageRef)
 				if err != nil {
 					mu.Lock()
-					fmt.Fprintf(os.Stderr, "WARN  %s  failed to resolve: %v\n", imageRef, err)
+					fmt.Fprintf(os.Stderr, "WARN  %s  failed to get creation time, pinning anyway: %v\n", imageRef, err)
 					mu.Unlock()
-					return
-				}
-				if !created.IsZero() && created.After(cutoff) {
+				} else if !created.IsZero() && created.After(cutoff) {
 					mu.Lock()
 					fmt.Printf("  skipped %s (built %s, within %d days)\n", imageRef, created.Format("2006-01-02"), minAge)
 					mu.Unlock()
 					return
 				}
-				digest = d
-			} else {
-				// HEAD-only resolve (cheapest)
-				d, err := res.Resolve(ctx, imageRef)
-				if err != nil {
-					mu.Lock()
-					fmt.Fprintf(os.Stderr, "WARN  %s  failed to resolve: %v\n", imageRef, err)
-					mu.Unlock()
-					return
-				}
-				digest = d
 			}
 
 			mu.Lock()
