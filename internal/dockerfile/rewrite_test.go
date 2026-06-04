@@ -52,6 +52,20 @@ func TestAddDigest(t *testing.T) {
 			digest:   "sha256:abc123",
 			want:     "FROM --platform=linux/amd64 golang:1.22@sha256:abc123 AS builder",
 		},
+		{
+			name:     "COPY --from simple tag",
+			original: "COPY --from=nginx:alpine /etc/nginx /etc/nginx",
+			rawRef:   "nginx:alpine",
+			digest:   "sha256:abc123",
+			want:     "COPY --from=nginx:alpine@sha256:abc123 /etc/nginx /etc/nginx",
+		},
+		{
+			name:     "COPY --from update existing digest",
+			original: "COPY --from=nginx:alpine@sha256:olddigest /etc/nginx /etc/nginx",
+			rawRef:   "nginx:alpine@sha256:olddigest",
+			digest:   "sha256:newdigest",
+			want:     "COPY --from=nginx:alpine@sha256:newdigest /etc/nginx /etc/nginx",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -77,6 +91,26 @@ func TestRewriteFile(t *testing.T) {
 
 	got := RewriteFile(content, instructions, digests)
 	want := "# My Dockerfile\nFROM node:20.11.1@sha256:abc123\nRUN npm install\nFROM python:3.12-slim@sha256:def456 AS builder\nRUN pip install -r requirements.txt\nFROM scratch\n"
+	if got != want {
+		t.Errorf("RewriteFile() =\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestRewriteFile_WithCopyFrom(t *testing.T) {
+	content := "FROM golang:1.22 AS builder\nCOPY --from=builder /app /app\nCOPY --from=nginx:alpine /etc/nginx /etc/nginx\nFROM debian:bookworm-slim\n"
+	instructions := []FromInstruction{
+		{ImageRef: "golang:1.22", RawRef: "golang:1.22", StartLine: 1},
+		{ImageRef: "builder", RawRef: "builder", StartLine: 2, IsCopyFrom: true, Skip: true, SkipReason: "stage reference"},
+		{ImageRef: "nginx:alpine", RawRef: "nginx:alpine", StartLine: 3, IsCopyFrom: true},
+		{ImageRef: "debian:bookworm-slim", RawRef: "debian:bookworm-slim", StartLine: 4},
+	}
+	digests := map[int]string{
+		0: "sha256:golang111",
+		2: "sha256:nginx222",
+		3: "sha256:debian333",
+	}
+	got := RewriteFile(content, instructions, digests)
+	want := "FROM golang:1.22@sha256:golang111 AS builder\nCOPY --from=builder /app /app\nCOPY --from=nginx:alpine@sha256:nginx222 /etc/nginx /etc/nginx\nFROM debian:bookworm-slim@sha256:debian333\n"
 	if got != want {
 		t.Errorf("RewriteFile() =\n%s\nwant:\n%s", got, want)
 	}

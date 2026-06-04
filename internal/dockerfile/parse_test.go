@@ -150,6 +150,109 @@ func TestParse_PlatformVariable(t *testing.T) {
 	}
 }
 
+func TestParse_CopyFrom(t *testing.T) {
+	input := strings.Join([]string{
+		"FROM golang:1.22 AS builder",
+		"FROM nginx:alpine AS server",
+		"COPY --from=builder /app /app",
+		"COPY --from=0 /bin/tool /usr/local/bin/tool",
+		"COPY --from=nginx:alpine /etc/nginx /etc/nginx",
+		"COPY --from=gcr.io/distroless/base:nonroot /etc /etc",
+		"COPY --from=server /var/www /var/www",
+		"COPY /src /dst",
+		"",
+	}, "\n")
+
+	instructions, err := Parse(strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+
+	if len(instructions) != 7 {
+		t.Fatalf("expected 7 instructions, got %d", len(instructions))
+	}
+
+	if instructions[0].ImageRef != "golang:1.22" || instructions[0].IsCopyFrom {
+		t.Errorf("[0] unexpected: %+v", instructions[0])
+	}
+
+	if instructions[1].ImageRef != "nginx:alpine" || instructions[1].IsCopyFrom {
+		t.Errorf("[1] unexpected: %+v", instructions[1])
+	}
+
+	inst := instructions[2]
+	if !inst.IsCopyFrom || !inst.Skip || inst.SkipReason != "stage reference" {
+		t.Errorf("[2] COPY --from=builder: want IsCopyFrom=true Skip=true SkipReason=stage reference, got %+v", inst)
+	}
+
+	inst = instructions[3]
+	if !inst.IsCopyFrom || !inst.Skip || inst.SkipReason != "stage index reference" {
+		t.Errorf("[3] COPY --from=0: want IsCopyFrom=true Skip=true SkipReason=stage index reference, got %+v", inst)
+	}
+
+	inst = instructions[4]
+	if !inst.IsCopyFrom || inst.Skip || inst.ImageRef != "nginx:alpine" {
+		t.Errorf("[4] COPY --from=nginx:alpine: want IsCopyFrom=true Skip=false ImageRef=nginx:alpine, got %+v", inst)
+	}
+
+	inst = instructions[5]
+	if !inst.IsCopyFrom || inst.Skip || inst.ImageRef != "gcr.io/distroless/base:nonroot" {
+		t.Errorf("[5] COPY --from=gcr.io/...: want IsCopyFrom=true Skip=false ImageRef=gcr.io/distroless/base:nonroot, got %+v", inst)
+	}
+
+	inst = instructions[6]
+	if !inst.IsCopyFrom || !inst.Skip || inst.SkipReason != "stage reference" {
+		t.Errorf("[6] COPY --from=server: want IsCopyFrom=true Skip=true SkipReason=stage reference, got %+v", inst)
+	}
+}
+
+func TestParse_CopyFromAlreadyPinned(t *testing.T) {
+	input := "COPY --from=nginx:alpine@sha256:abc123def456 /etc/nginx /etc/nginx\n"
+	instructions, err := Parse(strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if len(instructions) != 1 {
+		t.Fatalf("expected 1 instruction, got %d", len(instructions))
+	}
+	inst := instructions[0]
+	if inst.ImageRef != "nginx:alpine" {
+		t.Errorf("ImageRef = %q, want %q", inst.ImageRef, "nginx:alpine")
+	}
+	if inst.Digest != "sha256:abc123def456" {
+		t.Errorf("Digest = %q, want %q", inst.Digest, "sha256:abc123def456")
+	}
+	if !inst.IsCopyFrom {
+		t.Error("IsCopyFrom should be true")
+	}
+	if inst.Skip {
+		t.Error("should not be skipped")
+	}
+}
+
+func TestParse_CopyFromForwardStageRef(t *testing.T) {
+	// COPY --from references a stage defined LATER in the file; should still be
+	// detected as a stage reference thanks to the two-pass parsing.
+	input := strings.Join([]string{
+		"FROM alpine AS base",
+		"COPY --from=late /bin/tool /usr/local/bin/tool",
+		"FROM ubuntu AS late",
+		"",
+	}, "\n")
+	instructions, err := Parse(strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	// 2 FROM + 1 COPY --from
+	if len(instructions) != 3 {
+		t.Fatalf("expected 3 instructions, got %d", len(instructions))
+	}
+	inst := instructions[1]
+	if !inst.IsCopyFrom || !inst.Skip || inst.SkipReason != "stage reference" {
+		t.Errorf("forward stage ref: want IsCopyFrom=true Skip=true SkipReason=stage reference, got %+v", inst)
+	}
+}
+
 func TestExpandVars(t *testing.T) {
 	defaults := map[string]string{"VERSION": "3.12", "REG": "ghcr.io"}
 	tests := []struct {
