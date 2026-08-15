@@ -37,7 +37,17 @@ func DetectFileType(path string) FileType {
 
 	// GitLab CI files. The suffix names the format, so a pipeline split into
 	// parts keeps it wherever the parts are kept.
-	if strings.HasSuffix(lower, ".gitlab-ci.yml") || isComponentTemplate(normalized) {
+	if strings.HasSuffix(lower, ".gitlab-ci.yml") {
+		return FileTypeGitLab
+	}
+
+	// The compose filenames are claimed before the GitLab layouts below, which
+	// key on directory names that belong to no one in particular.
+	if isComposeName(lower) {
+		return FileTypeCompose
+	}
+
+	if isComponentTemplate(normalized) {
 		return FileTypeGitLab
 	}
 
@@ -61,6 +71,16 @@ func DetectFileType(path string) FileType {
 // publishes a component from templates/<name>.yml or from
 // templates/<name>/template.yml, and accepts no other layout.
 // https://docs.gitlab.com/ci/components/
+// isComposeName reports whether base is one of the compose filenames, which are
+// the names the default search looks for.
+func isComposeName(base string) bool {
+	if base == "compose.yml" || base == "compose.yaml" {
+		return true
+	}
+	return strings.HasPrefix(base, "docker-compose") &&
+		(strings.HasSuffix(base, ".yml") || strings.HasSuffix(base, ".yaml"))
+}
+
 func isComponentTemplate(normalized string) bool {
 	for _, pattern := range []string{"**/templates/*.yml", "**/templates/*/template.yml"} {
 		if ok, err := doublestar.Match(pattern, normalized); err == nil && ok {
