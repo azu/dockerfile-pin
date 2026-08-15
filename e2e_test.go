@@ -10,6 +10,7 @@ import (
 	"github.com/azu/dockerfile-pin/cmd"
 	"github.com/azu/dockerfile-pin/internal/actions"
 	"github.com/azu/dockerfile-pin/internal/dockerfile"
+	"github.com/azu/dockerfile-pin/internal/gitlab"
 	"github.com/azu/dockerfile-pin/internal/resolver"
 )
 
@@ -365,6 +366,83 @@ runs:
 	}
 
 	result := actions.RewriteFile(input, refs, digests)
+
+	if result != expected {
+		t.Errorf("unexpected output:\n--- got ---\n%s\n--- want ---\n%s", result, expected)
+	}
+}
+
+func TestPinGitLabCIEndToEnd(t *testing.T) {
+	input := `stages:
+  - test
+
+default:
+  image:
+    name: node:24
+    entrypoint: [""]
+
+test:
+  services:
+    - postgres:18
+    - name: redis:7
+      alias: cache
+  script:
+    - npm test
+
+deploy:
+  image: $CI_REGISTRY_IMAGE:latest
+  script:
+    - ./deploy.sh
+`
+	expected := `stages:
+  - test
+
+default:
+  image:
+    name: node:24@sha256:aaa111
+    entrypoint: [""]
+
+test:
+  services:
+    - postgres:18@sha256:bbb222
+    - name: redis:7@sha256:ccc333
+      alias: cache
+  script:
+    - npm test
+
+deploy:
+  image: $CI_REGISTRY_IMAGE:latest
+  script:
+    - ./deploy.sh
+`
+	mock := &resolver.MockResolver{
+		Digests: map[string]string{
+			"node:24":     "sha256:aaa111",
+			"postgres:18": "sha256:bbb222",
+			"redis:7":     "sha256:ccc333",
+		},
+	}
+
+	refs, err := gitlab.Parse([]byte(input))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+
+	ctx := context.Background()
+	digests := make(map[int]string)
+	for i, ref := range refs {
+		if ref.Skip || ref.Digest != "" {
+			continue
+		}
+		digest, err := mock.Resolve(ctx, ref.ImageRef)
+		if err != nil {
+			t.Logf("skipping %s: %v", ref.ImageRef, err)
+			continue
+		}
+		digests[i] = digest
+	}
+
+	result := gitlab.RewriteFile(input, refs, digests)
 
 	if result != expected {
 		t.Errorf("unexpected output:\n--- got ---\n%s\n--- want ---\n%s", result, expected)
