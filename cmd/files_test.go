@@ -125,6 +125,11 @@ func TestDetectFileType(t *testing.T) {
 		{"action.yaml", FileTypeActions},
 		{"subdir/action.yml", FileTypeActions},
 		{"my-action/action.yaml", FileTypeActions},
+		{".gitlab-ci.yml", FileTypeGitLab},
+		{".gitlab-ci.yaml", FileTypeGitLab},
+		{"subdir/.gitlab-ci.yml", FileTypeGitLab},
+		{"build.gitlab-ci.yml", FileTypeCompose},
+		{".gitlab/ci/test.yml", FileTypeCompose},
 	}
 	for _, tt := range tests {
 		got := DetectFileType(tt.path)
