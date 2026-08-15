@@ -62,6 +62,41 @@ build:
 	}
 }
 
+// The `default:` block carries images for every job, while the remaining
+// global keywords are not jobs and must never contribute a reference, even
+// when `variables:` happens to define a variable called `image`.
+func TestParse_GlobalKeywords(t *testing.T) {
+	content := []byte(`
+stages:
+  - build
+variables:
+  image: not-an-image:1.0
+workflow:
+  rules:
+    - if: $CI_COMMIT_BRANCH
+include:
+  local: /templates/build.yml
+default:
+  image: alpine:3.20
+build:
+  script:
+    - make
+`)
+	refs, err := Parse(content)
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if len(refs) != 1 {
+		t.Fatalf("got %d refs, want 1: %+v", len(refs), refs)
+	}
+	if refs[0].ImageRef != "alpine:3.20" {
+		t.Errorf("ImageRef = %q, want %q", refs[0].ImageRef, "alpine:3.20")
+	}
+	if refs[0].Location != "default.image" {
+		t.Errorf("Location = %q, want %q", refs[0].Location, "default.image")
+	}
+}
+
 func TestParse_JobServicesStrings(t *testing.T) {
 	content := []byte(`
 test:
