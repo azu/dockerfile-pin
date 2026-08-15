@@ -61,6 +61,29 @@ test:
 	}
 }
 
+func TestRewriteFile_ComponentSpecHeader(t *testing.T) {
+	content := `spec:
+  inputs:
+    stage:
+      default: test
+---
+build:
+  image: node:24
+`
+	refs, err := Parse([]byte(content))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	result := RewriteFile(content, refs, map[int]string{0: "sha256:aaa111"})
+
+	if !strings.Contains(result, "image: node:24@sha256:aaa111") {
+		t.Errorf("image in the second document was not pinned:\n%s", result)
+	}
+	if !strings.Contains(result, "      default: test") {
+		t.Errorf("the header document was not preserved:\n%s", result)
+	}
+}
+
 func TestRewriteFile_SkippedRefUntouched(t *testing.T) {
 	content := `build:
   image: $CI_REGISTRY_IMAGE:latest

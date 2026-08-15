@@ -85,6 +85,36 @@ build:
 	}
 }
 
+// A CI component declares its inputs in a header document, separated from the
+// configuration by `---`. Reading only the first document would leave every
+// image in the file invisible.
+func TestParse_ComponentSpecHeader(t *testing.T) {
+	content := []byte(`
+spec:
+  inputs:
+    stage:
+      default: test
+---
+build:
+  image: node:24
+  script:
+    - npm ci
+`)
+	refs, err := Parse(content)
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if len(refs) != 1 {
+		t.Fatalf("got %d refs, want 1: %+v", len(refs), refs)
+	}
+	if refs[0].ImageRef != "node:24" {
+		t.Errorf("ImageRef = %q, want %q", refs[0].ImageRef, "node:24")
+	}
+	if refs[0].Line != 8 {
+		t.Errorf("Line = %d, want 8, so that the rewrite targets the image in the second document", refs[0].Line)
+	}
+}
+
 func TestParse_NoImages(t *testing.T) {
 	content := []byte(`
 stages:
