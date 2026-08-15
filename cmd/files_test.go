@@ -126,8 +126,8 @@ func TestDetectFileType(t *testing.T) {
 		{"subdir/action.yml", FileTypeActions},
 		{"my-action/action.yaml", FileTypeActions},
 		{".gitlab-ci.yml", FileTypeGitLab},
-		{".gitlab-ci.yaml", FileTypeGitLab},
 		{"subdir/.gitlab-ci.yml", FileTypeGitLab},
+		{".gitlab-ci.yaml", FileTypeCompose},
 		{"build.gitlab-ci.yml", FileTypeCompose},
 		{".gitlab/ci/test.yml", FileTypeCompose},
 	}
