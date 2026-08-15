@@ -62,6 +62,42 @@ build:
 	}
 }
 
+func TestParse_AlreadyPinned(t *testing.T) {
+	content := []byte(`
+build:
+  image: node:24@sha256:abc123
+  services:
+    - name: postgres:18@sha256:def456
+`)
+	refs, err := Parse(content)
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if len(refs) != 2 {
+		t.Fatalf("got %d refs, want 2", len(refs))
+	}
+	for _, tt := range []struct {
+		index      int
+		wantImage  string
+		wantDigest string
+		wantRaw    string
+	}{
+		{0, "node:24", "sha256:abc123", "node:24@sha256:abc123"},
+		{1, "postgres:18", "sha256:def456", "postgres:18@sha256:def456"},
+	} {
+		r := refs[tt.index]
+		if r.ImageRef != tt.wantImage {
+			t.Errorf("[%d] ImageRef = %q, want %q", tt.index, r.ImageRef, tt.wantImage)
+		}
+		if r.Digest != tt.wantDigest {
+			t.Errorf("[%d] Digest = %q, want %q", tt.index, r.Digest, tt.wantDigest)
+		}
+		if r.RawRef != tt.wantRaw {
+			t.Errorf("[%d] RawRef = %q, want %q", tt.index, r.RawRef, tt.wantRaw)
+		}
+	}
+}
+
 // The `default:` block carries images for every job, while the remaining
 // global keywords are not jobs and must never contribute a reference, even
 // when `variables:` happens to define a variable called `image`.
