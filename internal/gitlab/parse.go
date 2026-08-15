@@ -51,29 +51,39 @@ func Parse(content []byte) ([]GitLabImageRef, error) {
 		if doc.Kind != yaml.DocumentNode || len(doc.Content) == 0 {
 			continue
 		}
-		refs = append(refs, parseDocument(doc.Content[0])...)
+		refs = append(refs, parseImages(doc.Content[0])...)
 	}
 }
 
-// parseDocument reads one document of the file.
-func parseDocument(root *yaml.Node) []GitLabImageRef {
+// parseImages reads one document of the file.
+func parseImages(root *yaml.Node) []GitLabImageRef {
 	if root.Kind != yaml.MappingNode {
 		return nil
 	}
 
-	refs := parseImageAndServices(root, "")
+	refs := parseGlobalImages(root)
 	for i := 0; i+1 < len(root.Content); i += 2 {
 		name := root.Content[i].Value
 		value := root.Content[i+1]
 		if value.Kind != yaml.MappingNode || nonJobKeywords[name] {
 			continue
 		}
-		refs = append(refs, parseImageAndServices(value, name+".")...)
+		refs = append(refs, parseJobImages(name, value)...)
 	}
 	return refs
 }
 
-func parseImageAndServices(node *yaml.Node, prefix string) []GitLabImageRef {
+// parseGlobalImages reads the root form, which GitLab deprecated in favour of
+// declaring the same keywords under `default:`.
+func parseGlobalImages(root *yaml.Node) []GitLabImageRef {
+	return imageRefsIn(root, "")
+}
+
+func parseJobImages(name string, job *yaml.Node) []GitLabImageRef {
+	return imageRefsIn(job, name+".")
+}
+
+func imageRefsIn(node *yaml.Node, prefix string) []GitLabImageRef {
 	var refs []GitLabImageRef
 	if ref := parseImageValue(findMapValue(node, "image"), prefix+"image", "image"); ref != nil {
 		refs = append(refs, *ref)
