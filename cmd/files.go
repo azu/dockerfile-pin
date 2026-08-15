@@ -35,8 +35,7 @@ func DetectFileType(path string) FileType {
 		return FileTypeActions
 	}
 
-	// GitLab CI files. GitLab reads this one name and no other, so a split or
-	// renamed configuration is named with -f instead.
+	// GitLab CI files
 	if lower == ".gitlab-ci.yml" {
 		return FileTypeGitLab
 	}
