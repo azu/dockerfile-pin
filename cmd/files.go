@@ -40,6 +40,14 @@ func DetectFileType(path string) FileType {
 		return FileTypeGitLab
 	}
 
+	// GitLab CI files split out and pulled back in with `include: local:`.
+	// The directory is a convention rather than something GitLab defines, but
+	// `.gitlab` itself holds features of its own, so only `ci` counts.
+	if strings.Contains(normalized, ".gitlab/ci/") &&
+		(strings.HasSuffix(lower, ".yml") || strings.HasSuffix(lower, ".yaml")) {
+		return FileTypeGitLab
+	}
+
 	// Compose files (any other YAML)
 	if strings.HasSuffix(lower, ".yml") || strings.HasSuffix(lower, ".yaml") {
 		return FileTypeCompose
