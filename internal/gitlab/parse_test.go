@@ -170,6 +170,32 @@ build:
 	}
 }
 
+// The root `image:` takes the mapping form as well as the scalar one.
+func TestParse_DeprecatedRootImageMapping(t *testing.T) {
+	content := []byte(`
+image:
+  name: ruby:3.4
+  entrypoint: [""]
+
+build:
+  script:
+    - make
+`)
+	refs, err := Parse(content)
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if len(refs) != 1 {
+		t.Fatalf("got %d refs, want 1: %+v", len(refs), refs)
+	}
+	if refs[0].ImageRef != "ruby:3.4" {
+		t.Errorf("ImageRef = %q, want %q", refs[0].ImageRef, "ruby:3.4")
+	}
+	if refs[0].Location != "image.name" {
+		t.Errorf("Location = %q, want %q", refs[0].Location, "image.name")
+	}
+}
+
 // The values of CI variables are known only to the running pipeline, so a
 // reference built from them cannot be resolved against a registry.
 func TestParse_VariableInterpolation(t *testing.T) {
