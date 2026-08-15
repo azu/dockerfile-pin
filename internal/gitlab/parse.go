@@ -22,9 +22,9 @@ type GitLabImageRef struct {
 	SkipReason string
 }
 
-// nonJobKeywords lets a job be recognised by exclusion, job names being
-// arbitrary. `default` is absent because it holds images to be read like a
-// job's; `image` is present because its deprecated root form may be a mapping.
+// nonJobKeywords are the root keys that are not jobs, job names being arbitrary.
+// `variables` is the one that has to be here, its entries being named freely;
+// `default` is absent because it holds images to be read the way a job's are.
 var nonJobKeywords = map[string]bool{
 	"image":     true,
 	"include":   true,
