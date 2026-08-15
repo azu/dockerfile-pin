@@ -12,20 +12,19 @@ import (
 
 // GitLabImageRef represents a Docker image reference found in a GitLab CI file.
 type GitLabImageRef struct {
-	Location string // human-readable path, e.g. "build.image"
-	Key      string // YAML key holding the reference, empty for a sequence entry
-	ImageRef string // image ref without digest
-	RawRef   string // as written in the file
-	Digest   string // existing digest if already pinned
-	Line     int    // 1-based line number
-
+	Location   string // human-readable path, e.g. "build.image"
+	Key        string // YAML key holding the reference, empty for a sequence entry
+	ImageRef   string // image ref without digest
+	RawRef     string // as written in the file
+	Digest     string // existing digest if already pinned
+	Line       int    // 1-based line number
 	Skip       bool
 	SkipReason string
 }
 
 // nonJobKeywords lets a job be recognised by exclusion, job names being
-// arbitrary. `default` is absent on purpose; `image` is present because its
-// deprecated root form may be a mapping.
+// arbitrary. `default` is absent because it holds images to be read like a
+// job's; `image` is present because its deprecated root form may be a mapping.
 var nonJobKeywords = map[string]bool{
 	"image":     true,
 	"include":   true,
