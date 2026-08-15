@@ -62,6 +62,39 @@ build:
 	}
 }
 
+// Declaring `image:` and `services:` at the root instead of under `default:`
+// is deprecated but still accepted by GitLab, and remains widespread in
+// existing pipelines.
+func TestParse_DeprecatedRootImageAndServices(t *testing.T) {
+	content := []byte(`
+image: node:24
+services:
+  - postgres:18
+build:
+  script:
+    - make
+`)
+	refs, err := Parse(content)
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if len(refs) != 2 {
+		t.Fatalf("got %d refs, want 2: %+v", len(refs), refs)
+	}
+	if refs[0].ImageRef != "node:24" {
+		t.Errorf("[0] ImageRef = %q, want %q", refs[0].ImageRef, "node:24")
+	}
+	if refs[0].Location != "image" {
+		t.Errorf("[0] Location = %q, want %q", refs[0].Location, "image")
+	}
+	if refs[1].ImageRef != "postgres:18" {
+		t.Errorf("[1] ImageRef = %q, want %q", refs[1].ImageRef, "postgres:18")
+	}
+	if refs[1].Location != "services[0]" {
+		t.Errorf("[1] Location = %q, want %q", refs[1].Location, "services[0]")
+	}
+}
+
 // A reference assembled from CI variables cannot be resolved against a
 // registry, because the variable values are only known to the running
 // pipeline. Such references are reported and left alone.
