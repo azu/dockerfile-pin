@@ -62,6 +62,53 @@ build:
 	}
 }
 
+// Hidden jobs are ordinary jobs that no pipeline runs directly; they are
+// extended by real jobs, so their images reach the runner all the same.
+func TestParse_HiddenJobTemplate(t *testing.T) {
+	content := []byte(`
+.build:
+  image: golang:1.26
+build:
+  extends: .build
+  script:
+    - go build ./...
+`)
+	refs, err := Parse(content)
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if len(refs) != 1 {
+		t.Fatalf("got %d refs, want 1", len(refs))
+	}
+	if refs[0].Location != ".build.image" {
+		t.Errorf("Location = %q, want %q", refs[0].Location, ".build.image")
+	}
+}
+
+func TestParse_NoImages(t *testing.T) {
+	content := []byte(`
+stages:
+  - build
+
+build:
+  script:
+    - make
+`)
+	refs, err := Parse(content)
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if len(refs) != 0 {
+		t.Errorf("got %d refs, want 0: %+v", len(refs), refs)
+	}
+}
+
+func TestParse_InvalidYAML(t *testing.T) {
+	if _, err := Parse([]byte("build:\n  image: [unclosed\n")); err == nil {
+		t.Error("Parse() error = nil, want an error")
+	}
+}
+
 // Declaring `image:` and `services:` at the root instead of under `default:`
 // is deprecated but still accepted by GitLab, and remains widespread in
 // existing pipelines.
