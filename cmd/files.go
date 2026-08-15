@@ -62,16 +62,8 @@ func DetectFileType(path string) FileType {
 // templates/<name>/template.yml, and accepts no other layout.
 // https://docs.gitlab.com/ci/components/
 func isComponentTemplate(normalized string) bool {
-	parts := strings.Split(normalized, "/")
-	for i, part := range parts {
-		if part != "templates" {
-			continue
-		}
-		rest := parts[i+1:]
-		if len(rest) == 1 && strings.HasSuffix(strings.ToLower(rest[0]), ".yml") {
-			return true
-		}
-		if len(rest) == 2 && strings.ToLower(rest[1]) == "template.yml" {
+	for _, pattern := range []string{"**/templates/*.yml", "**/templates/*/template.yml"} {
+		if ok, err := doublestar.Match(pattern, normalized); err == nil && ok {
 			return true
 		}
 	}
