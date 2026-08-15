@@ -35,18 +35,38 @@ func Parse(content []byte) ([]GitLabImageRef, error) {
 		if value.Kind != yaml.MappingNode {
 			continue
 		}
-		imageNode := findMapValue(value, "image")
-		if imageNode == nil || imageNode.Kind != yaml.ScalarNode || imageNode.Value == "" {
-			continue
+		if ref := parseImage(findMapValue(value, "image"), name+".image"); ref != nil {
+			refs = append(refs, *ref)
 		}
-		refs = append(refs, GitLabImageRef{
-			Location: name + ".image",
-			ImageRef: imageNode.Value,
-			RawRef:   imageNode.Value,
-			Line:     imageNode.Line,
-		})
 	}
 	return refs, nil
+}
+
+// parseImage reads an `image:` value, which GitLab allows to be either a
+// scalar or a mapping whose `name:` holds the reference.
+func parseImage(node *yaml.Node, location string) *GitLabImageRef {
+	if node == nil {
+		return nil
+	}
+	switch node.Kind {
+	case yaml.ScalarNode:
+		return makeRef(node, location)
+	case yaml.MappingNode:
+		return makeRef(findMapValue(node, "name"), location+".name")
+	}
+	return nil
+}
+
+func makeRef(node *yaml.Node, location string) *GitLabImageRef {
+	if node == nil || node.Kind != yaml.ScalarNode || node.Value == "" {
+		return nil
+	}
+	return &GitLabImageRef{
+		Location: location,
+		ImageRef: node.Value,
+		RawRef:   node.Value,
+		Line:     node.Line,
+	}
 }
 
 func findMapValue(node *yaml.Node, key string) *yaml.Node {
