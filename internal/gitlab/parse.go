@@ -80,6 +80,7 @@ func parseGlobalImages(root *yaml.Node) []GitLabImageRef {
 	return imageRefsIn(root, "")
 }
 
+// parseJobImages reads images written in one job.
 func parseJobImages(name string, job *yaml.Node) []GitLabImageRef {
 	return imageRefsIn(job, name+".")
 }
