@@ -1,7 +1,10 @@
 package gitlab
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
+	"io"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -40,16 +43,31 @@ var nonJobKeywords = map[string]bool{
 
 // Parse parses a GitLab CI file and returns the Docker image references it declares.
 func Parse(content []byte) ([]GitLabImageRef, error) {
-	var doc yaml.Node
-	if err := yaml.Unmarshal(content, &doc); err != nil {
-		return nil, fmt.Errorf("parsing YAML: %w", err)
+	var refs []GitLabImageRef
+	// A CI component declares its inputs in a header document, so a file may hold more than one.
+	decoder := yaml.NewDecoder(bytes.NewReader(content))
+	for {
+		var doc yaml.Node
+		err := decoder.Decode(&doc)
+		if errors.Is(err, io.EOF) {
+			return refs, nil
+		}
+		if err != nil {
+			return nil, fmt.Errorf("parsing YAML: %w", err)
+		}
+		if doc.Kind != yaml.DocumentNode || len(doc.Content) == 0 {
+			continue
+		}
+		refs = append(refs, parseDocument(doc.Content[0])...)
 	}
-	if doc.Kind != yaml.DocumentNode || len(doc.Content) == 0 {
-		return nil, nil
-	}
-	root := doc.Content[0]
+}
+
+// parseDocument reads one YAML document of a GitLab CI file. A file may hold
+// more than one, because a CI component states its inputs in a header document
+// that precedes the configuration.
+func parseDocument(root *yaml.Node) []GitLabImageRef {
 	if root.Kind != yaml.MappingNode {
-		return nil, nil
+		return nil
 	}
 
 	var refs []GitLabImageRef
@@ -69,7 +87,7 @@ func Parse(content []byte) ([]GitLabImageRef, error) {
 		}
 		refs = append(refs, parseServices(findMapValue(value, "services"), name+".services")...)
 	}
-	return refs, nil
+	return refs
 }
 
 // parseServices reads a `services:` sequence. Each entry is either a scalar or
