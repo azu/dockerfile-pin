@@ -61,20 +61,19 @@ func parseDocument(root *yaml.Node) []GitLabImageRef {
 		return nil
 	}
 
-	refs := parseScope(root, "")
+	refs := parseImageAndServices(root, "")
 	for i := 0; i+1 < len(root.Content); i += 2 {
 		name := root.Content[i].Value
 		value := root.Content[i+1]
 		if value.Kind != yaml.MappingNode || nonJobKeywords[name] {
 			continue
 		}
-		refs = append(refs, parseScope(value, name+".")...)
+		refs = append(refs, parseImageAndServices(value, name+".")...)
 	}
 	return refs
 }
 
-// parseScope reads the `image:` and `services:` of one mapping.
-func parseScope(node *yaml.Node, prefix string) []GitLabImageRef {
+func parseImageAndServices(node *yaml.Node, prefix string) []GitLabImageRef {
 	var refs []GitLabImageRef
 	if ref := parseImageValue(findMapValue(node, "image"), prefix+"image", "image"); ref != nil {
 		refs = append(refs, *ref)
