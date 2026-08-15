@@ -22,8 +22,12 @@ type GitLabImageRef struct {
 // nonJobKeywords are the global keywords of a GitLab CI file. Every other
 // root-level mapping is a job, including hidden templates such as `.build`.
 // `default` is deliberately absent because it carries images for all jobs.
+// `image` and `services` are listed because the deprecated root form of
+// `image:` may be a mapping, which would otherwise look like a job.
 var nonJobKeywords = map[string]bool{
+	"image":     true,
 	"include":   true,
+	"services":  true,
 	"spec":      true,
 	"stages":    true,
 	"variables": true,
@@ -45,6 +49,11 @@ func Parse(content []byte) ([]GitLabImageRef, error) {
 	}
 
 	var refs []GitLabImageRef
+	if ref := parseImage(findMapValue(root, "image"), "image"); ref != nil {
+		refs = append(refs, *ref)
+	}
+	refs = append(refs, parseServices(findMapValue(root, "services"), "services")...)
+
 	for i := 0; i+1 < len(root.Content); i += 2 {
 		name := root.Content[i].Value
 		value := root.Content[i+1]
