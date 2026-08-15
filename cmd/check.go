@@ -27,7 +27,7 @@ digest exists in the registry.
 Each image is reported as one of:
   OK     digest present and verified in registry
   FAIL   missing digest, or digest not found in registry
-  SKIP   scratch, multi-stage ref, ignored, or non-Docker uses
+  SKIP   scratch, multi-stage ref, ignored, non-Docker uses, or CI variable
   WARN   registry check failed (network error, auth issue, etc.)
 
 Exit code is 1 (configurable with --exit-code) when any image has FAIL status.

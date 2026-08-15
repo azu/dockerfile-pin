@@ -25,7 +25,7 @@ By default, prints the rewritten file to stdout without modifying it (dry-run).
 Use --write to apply changes in place.
 
 Supports Dockerfiles, docker-compose.yml/compose.yaml, GitHub Actions workflows,
-and action.yml files. File type is detected from filename.
+action.yml files, and .gitlab-ci.yml. File type is detected from filename.
 
 Skipped automatically:
   - "FROM scratch" (no registry image)
@@ -33,6 +33,7 @@ Skipped automatically:
   - ARG-only base images with no default value
   - Compose services with a "build:" directive
   - Non-docker "uses:" in GitHub Actions (e.g., actions/checkout@v4)
+  - GitLab CI images built from variables (e.g., $CI_REGISTRY_IMAGE:latest)
   - Already-pinned images (use --update to re-resolve)
 
 Digests are resolved via HEAD requests and do not count against Docker Hub pull limits.`,

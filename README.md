@@ -1,6 +1,6 @@
 # dockerfile-pin
 
-A CLI tool that adds `@sha256:<digest>` to `FROM` lines in Dockerfiles, `image` fields in docker-compose.yml, and Docker image references in GitHub Actions files to prevent supply chain attacks.
+A CLI tool that adds `@sha256:<digest>` to `FROM` lines in Dockerfiles, `image` fields in docker-compose.yml, and Docker image references in GitHub Actions and GitLab CI files to prevent supply chain attacks.
 
 ## Install
 
@@ -37,7 +37,7 @@ See [GitHub Releases](https://github.com/azu/dockerfile-pin/releases) for all pl
 
 ### Run
 
-Add digests to Dockerfile `FROM` lines, docker-compose.yml `image` fields, and GitHub Actions Docker image references.
+Add digests to Dockerfile `FROM` lines, docker-compose.yml `image` fields, and GitHub Actions and GitLab CI Docker image references.
 By default, shows changes without modifying files (dry-run).
 
 ```bash
@@ -161,6 +161,52 @@ jobs:
       - uses: actions/checkout@v4  # not a Docker image, skipped
 ```
 
+#### GitLab CI
+
+**Before:**
+
+```yaml
+default:
+  image:
+    name: node:24
+    entrypoint: [""]
+
+test:
+  services:
+    - postgres:18
+    - name: redis:7
+      alias: cache
+  script:
+    - npm test
+
+deploy:
+  image: $CI_REGISTRY_IMAGE:latest
+  script:
+    - ./deploy.sh
+```
+
+**After:**
+
+```yaml
+default:
+  image:
+    name: node:24@sha256:bb20cf73b3ad7212834ec48e2174cdcb5775f6550510a5336b842ae32741ce6c
+    entrypoint: [""]
+
+test:
+  services:
+    - postgres:18@sha256:a9abf4275f9e99bff8e6aed712b3b7dfec9cac1341bba01c1ffdfce9ff9fc34a
+    - name: redis:7@sha256:90bbb3c16635e9627f49eec6539f956d70746c409209041800a0280b93152823
+      alias: cache
+  script:
+    - npm test
+
+deploy:
+  image: $CI_REGISTRY_IMAGE:latest  # built from a CI variable, skipped
+  script:
+    - ./deploy.sh
+```
+
 ### Check
 
 Validate that digests are present and exist in the registry.
@@ -276,6 +322,23 @@ ignore-images:
 | `runs.image: 'docker://debian:stretch-slim'` | Yes |
 | `runs.image: 'Dockerfile'` | Skipped (local Dockerfile) |
 
+### GitLab CI files (`.gitlab-ci.yml`)
+
+Only the default configuration filename is recognised. Templates pulled in with `include:` have no naming convention that distinguishes them from other YAML, so they need `-f` or `--glob`.
+
+| Pattern | Supported |
+|---------|-----------|
+| `<job>.image: node:20` | Yes |
+| `<job>.image.name: node:20` | Yes |
+| `<job>.services[*]: postgres:16` | Yes |
+| `<job>.services[*].name: postgres:16` | Yes |
+| `default.image` and `default.services` | Yes |
+| Root-level `image` and `services` (deprecated by GitLab) | Yes |
+| Hidden job templates (`.build:`) | Yes |
+| `image: $CI_REGISTRY_IMAGE:tag` | Skipped (built from a CI variable) |
+| `image: node:20@sha256:...` | Skipped (use `--update`) |
+| Global keywords (`variables`, `workflow`, `include`, `stages`, `spec`) | Not scanned |
+
 ## CI Integration
 
 ### Check (PR validation)
@@ -319,13 +382,13 @@ jobs:
 `dockerfile-pin check` exits with code 1 if any image is missing a digest.
 
 When `-f` and `--glob` are omitted, it auto-detects target files using `git ls-files` filtered by the default glob pattern:
-`**/{Dockerfile,Dockerfile.*,docker-compose*.yml,docker-compose*.yaml,compose.yml,compose.yaml,action.yml,action.yaml,.github/workflows/*.yml,.github/workflows/*.yaml}`
+`**/{Dockerfile,Dockerfile.*,docker-compose*.yml,docker-compose*.yaml,compose.yml,compose.yaml,action.yml,action.yaml,.gitlab-ci.yml,.gitlab-ci.yaml,.github/workflows/*.yml,.github/workflows/*.yaml}`
 
 Outside a git repository, it falls back to the same glob pattern with common directories (`node_modules`, `vendor`) excluded.
 
 ### Pin (migration)
 
-Run locally to add digests to all Dockerfiles, compose files, and GitHub Actions files:
+Run locally to add digests to all Dockerfiles, compose files, GitHub Actions files, and GitLab CI files:
 
 ```bash
 # Preview changes
