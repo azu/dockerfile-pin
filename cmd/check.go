@@ -396,9 +396,8 @@ func parseGitLabForCheck(filePath string, syntaxOnly bool, ignoreImages []string
 	return results, nil
 }
 
-// gitlabOriginal returns a human-readable rendering of the source line for
-// check output. A service entry written as a scalar has no key of its own, so
-// it is shown with the sequence dash instead.
+// gitlabOriginal renders the source line for check output. A scalar service
+// entry has no key, so it is shown with the sequence dash.
 func gitlabOriginal(ref gitlab.GitLabImageRef) string {
 	if ref.Key == "" {
 		return "- " + ref.RawRef

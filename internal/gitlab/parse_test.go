@@ -62,8 +62,8 @@ build:
 	}
 }
 
-// Hidden jobs are ordinary jobs that no pipeline runs directly; they are
-// extended by real jobs, so their images reach the runner all the same.
+// No pipeline runs a hidden job directly, but real jobs extend it, so its
+// image reaches the runner all the same.
 func TestParse_HiddenJobTemplate(t *testing.T) {
 	content := []byte(`
 .build:
@@ -85,9 +85,8 @@ build:
 	}
 }
 
-// A CI component declares its inputs in a header document, separated from the
-// configuration by `---`. Reading only the first document would leave every
-// image in the file invisible.
+// A CI component declares its inputs in a header document before `---`.
+// Reading only that document would leave every image in the file invisible.
 func TestParse_ComponentSpecHeader(t *testing.T) {
 	content := []byte(`
 spec:
@@ -139,9 +138,8 @@ func TestParse_InvalidYAML(t *testing.T) {
 	}
 }
 
-// Declaring `image:` and `services:` at the root instead of under `default:`
-// is deprecated but still accepted by GitLab, and remains widespread in
-// existing pipelines.
+// Declaring these at the root instead of under `default:` is deprecated, but
+// GitLab still accepts it and existing pipelines are full of it.
 func TestParse_DeprecatedRootImageAndServices(t *testing.T) {
 	content := []byte(`
 image: node:24
@@ -172,9 +170,8 @@ build:
 	}
 }
 
-// A reference assembled from CI variables cannot be resolved against a
-// registry, because the variable values are only known to the running
-// pipeline. Such references are reported and left alone.
+// The values of CI variables are known only to the running pipeline, so a
+// reference built from them cannot be resolved against a registry.
 func TestParse_VariableInterpolation(t *testing.T) {
 	content := []byte(`
 build:
@@ -240,9 +237,8 @@ build:
 	}
 }
 
-// The `default:` block carries images for every job, while the remaining
-// global keywords are not jobs and must never contribute a reference, even
-// when `variables:` happens to define a variable called `image`.
+// `default:` carries images for every job; the other global keywords are not
+// jobs, even when `variables:` happens to define a variable called `image`.
 func TestParse_GlobalKeywords(t *testing.T) {
 	content := []byte(`
 stages:

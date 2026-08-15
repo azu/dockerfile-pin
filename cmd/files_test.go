@@ -203,8 +203,8 @@ func TestFindFiles_DefaultIncludesGitLabCI(t *testing.T) {
 	}
 }
 
-// Outside a git repository the search falls back to walking the filesystem,
-// which is a separate matcher and needs its own coverage for a dotfile.
+// Outside a git repository the search falls back to a separate matcher, which
+// needs its own coverage for a dotfile.
 func TestFindFiles_DefaultIncludesGitLabCIWithoutGit(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, ".gitlab-ci.yml"), []byte("build:\n  image: node:20\n"), 0644); err != nil {

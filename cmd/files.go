@@ -35,9 +35,8 @@ func DetectFileType(path string) FileType {
 		return FileTypeActions
 	}
 
-	// GitLab CI files. Only the default configuration filename is recognised,
-	// because included templates have no naming convention that would tell them
-	// apart from any other YAML.
+	// GitLab CI files. Templates pulled in with include: follow no naming
+	// convention, so only the default filename is recognised.
 	if lower == ".gitlab-ci.yml" || lower == ".gitlab-ci.yaml" {
 		return FileTypeGitLab
 	}

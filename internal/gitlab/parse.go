@@ -23,15 +23,10 @@ type GitLabImageRef struct {
 	SkipReason string
 }
 
-// nonJobKeywords are the global keywords of a GitLab CI file. Every other
-// root-level mapping is a job, including hidden templates such as `.build`.
-// `default` is deliberately absent because it carries images for all jobs.
-// `image` is listed because its deprecated root form may be a mapping, which
-// would otherwise look like a job; the remaining keywords are listed for
-// completeness, their values not being mappings.
-//
-// `spec` occupies a header document of its own rather than sitting beside the
-// jobs, and is listed so that a component's inputs are not read as a job.
+// nonJobKeywords are the global keywords of a GitLab CI file. Job names are
+// arbitrary, so a job can only be recognised by excluding these. `default` is
+// absent on purpose, because it carries images for every job. `image` matters
+// most: its deprecated root form is a mapping and would otherwise read as a job.
 var nonJobKeywords = map[string]bool{
 	"image":     true,
 	"include":   true,
@@ -63,9 +58,8 @@ func Parse(content []byte) ([]GitLabImageRef, error) {
 	}
 }
 
-// parseDocument reads one YAML document of a GitLab CI file. A file may hold
-// more than one, because a CI component states its inputs in a header document
-// that precedes the configuration.
+// parseDocument reads one document of the file. A CI component declares its
+// inputs in a header document, so a file may hold more than one.
 func parseDocument(root *yaml.Node) []GitLabImageRef {
 	if root.Kind != yaml.MappingNode {
 		return nil
@@ -83,9 +77,8 @@ func parseDocument(root *yaml.Node) []GitLabImageRef {
 	return refs
 }
 
-// parseScope reads the `image:` and `services:` of one mapping. The same pair
-// appears at the root, under `default:`, and in every job, so the three are
-// read the same way and told apart only by the location prefix.
+// parseScope reads the `image:` and `services:` of one mapping. The root,
+// `default:`, and every job carry the same pair, so all three come through here.
 func parseScope(node *yaml.Node, prefix string) []GitLabImageRef {
 	var refs []GitLabImageRef
 	if ref := parseImageValue(findMapValue(node, "image"), prefix+"image", "image"); ref != nil {
@@ -104,10 +97,9 @@ func parseScope(node *yaml.Node, prefix string) []GitLabImageRef {
 	return refs
 }
 
-// parseImageValue reads a value that is either a scalar reference or a mapping
-// whose `name:` holds it. Both `image:` and each `services:` entry take those
-// two forms; GitLab has no `image:` key inside a service entry. scalarKey names
-// the key the scalar form sits under, and is empty for a sequence entry.
+// parseImageValue reads a scalar reference or a mapping whose `name:` holds it.
+// A service entry keys its image on `name:`, not on `image:` as Docker Compose
+// does. scalarKey is empty for a sequence entry, which has no key of its own.
 func parseImageValue(node *yaml.Node, location string, scalarKey string) *GitLabImageRef {
 	if node == nil {
 		return nil

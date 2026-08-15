@@ -117,9 +117,8 @@ func TestRewriteFile_AlreadyPinnedIsReplaced(t *testing.T) {
 	}
 }
 
-// A flow sequence puts several references on one line, which no Docker
-// Compose file can produce, so the line-based rewrite has to handle more
-// than one replacement per line.
+// A flow sequence puts several references on one line, which no Docker Compose
+// file can produce and which the line-based rewrite was not designed against.
 func TestRewriteFile_FlowSequenceServices(t *testing.T) {
 	content := `test:
   services: [postgres:18, redis:7]
