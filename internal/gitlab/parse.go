@@ -55,8 +55,7 @@ func Parse(content []byte) ([]GitLabImageRef, error) {
 	}
 }
 
-// parseDocument reads one document of the file. A CI component declares its
-// inputs in a header document, so a file may hold more than one.
+// parseDocument reads one document of the file.
 func parseDocument(root *yaml.Node) []GitLabImageRef {
 	if root.Kind != yaml.MappingNode {
 		return nil
