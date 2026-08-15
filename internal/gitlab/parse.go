@@ -104,7 +104,6 @@ func imageRefsIn(node *yaml.Node, prefix string) []GitLabImageRef {
 }
 
 // parseImageRef reads a scalar reference or a mapping whose `name:` holds it.
-// A service entry is keyed on `name:`, not on `image:` as Docker Compose is.
 func parseImageRef(node *yaml.Node, location string, scalarKey string) *GitLabImageRef {
 	if node == nil {
 		return nil
