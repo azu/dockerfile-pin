@@ -87,7 +87,7 @@ func parseJobImages(name string, job *yaml.Node) []GitLabImageRef {
 
 func imageRefsIn(node *yaml.Node, prefix string) []GitLabImageRef {
 	var refs []GitLabImageRef
-	if ref := parseImageValue(findMapValue(node, "image"), prefix+"image", "image"); ref != nil {
+	if ref := parseImageRef(findMapValue(node, "image"), prefix+"image", "image"); ref != nil {
 		refs = append(refs, *ref)
 	}
 	services := findMapValue(node, "services")
@@ -96,16 +96,16 @@ func imageRefsIn(node *yaml.Node, prefix string) []GitLabImageRef {
 	}
 	for i, entry := range services.Content {
 		location := fmt.Sprintf("%sservices[%d]", prefix, i)
-		if ref := parseImageValue(entry, location, ""); ref != nil {
+		if ref := parseImageRef(entry, location, ""); ref != nil {
 			refs = append(refs, *ref)
 		}
 	}
 	return refs
 }
 
-// parseImageValue reads a scalar reference or a mapping whose `name:` holds it.
+// parseImageRef reads a scalar reference or a mapping whose `name:` holds it.
 // A service entry is keyed on `name:`, not on `image:` as Docker Compose is.
-func parseImageValue(node *yaml.Node, location string, scalarKey string) *GitLabImageRef {
+func parseImageRef(node *yaml.Node, location string, scalarKey string) *GitLabImageRef {
 	if node == nil {
 		return nil
 	}
