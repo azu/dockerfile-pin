@@ -16,6 +16,7 @@ const (
 	FileTypeDockerfile FileType = iota
 	FileTypeCompose
 	FileTypeActions
+	FileTypeGitLab
 )
 
 func DetectFileType(path string) FileType {
@@ -32,6 +33,13 @@ func DetectFileType(path string) FileType {
 	// GitHub Actions action metadata files
 	if lower == "action.yml" || lower == "action.yaml" {
 		return FileTypeActions
+	}
+
+	// GitLab CI files. Only the default configuration filename is recognised,
+	// because included templates have no naming convention that would tell them
+	// apart from any other YAML.
+	if lower == ".gitlab-ci.yml" || lower == ".gitlab-ci.yaml" {
+		return FileTypeGitLab
 	}
 
 	// Compose files (any other YAML)
