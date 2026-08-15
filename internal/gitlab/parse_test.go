@@ -33,3 +33,31 @@ build:
 		t.Errorf("Line = %d, want 7", r.Line)
 	}
 }
+
+func TestParse_JobImageMapping(t *testing.T) {
+	content := []byte(`
+build:
+  image:
+    name: ruby:3.4
+    entrypoint: [""]
+  script:
+    - bundle install
+`)
+	refs, err := Parse(content)
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if len(refs) != 1 {
+		t.Fatalf("got %d refs, want 1", len(refs))
+	}
+	r := refs[0]
+	if r.ImageRef != "ruby:3.4" {
+		t.Errorf("ImageRef = %q, want %q", r.ImageRef, "ruby:3.4")
+	}
+	if r.Location != "build.image.name" {
+		t.Errorf("Location = %q, want %q", r.Location, "build.image.name")
+	}
+	if r.Line != 4 {
+		t.Errorf("Line = %d, want 4 (the name: line)", r.Line)
+	}
+}
