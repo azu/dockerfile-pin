@@ -174,6 +174,59 @@ func TestFindFiles_DefaultIncludesActions(t *testing.T) {
 	}
 }
 
+func TestFindFiles_DefaultIncludesGitLabCI(t *testing.T) {
+	dir := t.TempDir()
+	for _, p := range []string{
+		filepath.Join(dir, "Dockerfile"),
+		filepath.Join(dir, ".gitlab-ci.yml"),
+	} {
+		if err := os.WriteFile(p, []byte("FROM node:20"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	initGitRepo(t, dir)
+	gitAdd(t, dir, ".")
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chdir(origDir) }()
+	files, err := FindFiles("", "")
+	if err != nil {
+		t.Fatalf("FindFiles() error = %v", err)
+	}
+	if len(files) != 2 {
+		t.Errorf("FindFiles() returned %d files, want 2: %v", len(files), files)
+	}
+}
+
+// Outside a git repository the search falls back to walking the filesystem,
+// which is a separate matcher and needs its own coverage for a dotfile.
+func TestFindFiles_DefaultIncludesGitLabCIWithoutGit(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".gitlab-ci.yml"), []byte("build:\n  image: node:20\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chdir(origDir) }()
+	files, err := FindFiles("", "")
+	if err != nil {
+		t.Fatalf("FindFiles() error = %v", err)
+	}
+	if len(files) != 1 {
+		t.Errorf("FindFiles() returned %d files, want 1: %v", len(files), files)
+	}
+}
+
 func TestFindFiles_RespectsGitignore(t *testing.T) {
 	dir := t.TempDir()
 	ignored := filepath.Join(dir, "node_modules", "pkg")
