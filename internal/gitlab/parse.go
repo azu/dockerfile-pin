@@ -38,8 +38,32 @@ func Parse(content []byte) ([]GitLabImageRef, error) {
 		if ref := parseImage(findMapValue(value, "image"), name+".image"); ref != nil {
 			refs = append(refs, *ref)
 		}
+		refs = append(refs, parseServices(findMapValue(value, "services"), name+".services")...)
 	}
 	return refs, nil
+}
+
+// parseServices reads a `services:` sequence. Each entry is either a scalar or
+// a mapping whose `name:` holds the reference; GitLab has no `image:` key here.
+func parseServices(node *yaml.Node, location string) []GitLabImageRef {
+	if node == nil || node.Kind != yaml.SequenceNode {
+		return nil
+	}
+	var refs []GitLabImageRef
+	for i, entry := range node.Content {
+		entryLocation := fmt.Sprintf("%s[%d]", location, i)
+		switch entry.Kind {
+		case yaml.ScalarNode:
+			if ref := makeRef(entry, entryLocation); ref != nil {
+				refs = append(refs, *ref)
+			}
+		case yaml.MappingNode:
+			if ref := makeRef(findMapValue(entry, "name"), entryLocation+".name"); ref != nil {
+				refs = append(refs, *ref)
+			}
+		}
+	}
+	return refs
 }
 
 // parseImage reads an `image:` value, which GitLab allows to be either a
