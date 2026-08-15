@@ -36,7 +36,7 @@ func DetectFileType(path string) FileType {
 	}
 
 	// GitLab CI files
-	if lower == ".gitlab-ci.yml" {
+	if lower == ".gitlab-ci.yml" || isComponentTemplate(normalized) {
 		return FileTypeGitLab
 	}
 
@@ -46,6 +46,27 @@ func DetectFileType(path string) FileType {
 	}
 
 	return FileTypeDockerfile
+}
+
+// isComponentTemplate reports whether path is a CI component template. GitLab
+// publishes a component from templates/<name>.yml or from
+// templates/<name>/template.yml, and accepts no other layout.
+// https://docs.gitlab.com/ci/components/
+func isComponentTemplate(normalized string) bool {
+	parts := strings.Split(normalized, "/")
+	for i, part := range parts {
+		if part != "templates" {
+			continue
+		}
+		rest := parts[i+1:]
+		if len(rest) == 1 && strings.HasSuffix(strings.ToLower(rest[0]), ".yml") {
+			return true
+		}
+		if len(rest) == 2 && strings.ToLower(rest[1]) == "template.yml" {
+			return true
+		}
+	}
+	return false
 }
 
 // defaultGlob is used when neither -f nor --glob is specified.
