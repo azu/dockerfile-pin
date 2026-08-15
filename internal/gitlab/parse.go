@@ -73,7 +73,7 @@ func parseDocument(root *yaml.Node) []GitLabImageRef {
 	return refs
 }
 
-// parseScope reads the `image:` and `services:` of the root, `default:`, or a job.
+// parseScope reads the `image:` and `services:` of one mapping.
 func parseScope(node *yaml.Node, prefix string) []GitLabImageRef {
 	var refs []GitLabImageRef
 	if ref := parseImageValue(findMapValue(node, "image"), prefix+"image", "image"); ref != nil {
