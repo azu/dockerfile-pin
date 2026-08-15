@@ -1,0 +1,62 @@
+package gitlab
+
+import (
+	"fmt"
+
+	"gopkg.in/yaml.v3"
+)
+
+// GitLabImageRef represents a Docker image reference found in a GitLab CI file.
+type GitLabImageRef struct {
+	Location string // human-readable path, e.g. "build.image"
+	ImageRef string // image ref without digest
+	RawRef   string // as written in the file
+	Line     int    // 1-based line number
+}
+
+// Parse parses a GitLab CI file and returns the Docker image references it declares.
+func Parse(content []byte) ([]GitLabImageRef, error) {
+	var doc yaml.Node
+	if err := yaml.Unmarshal(content, &doc); err != nil {
+		return nil, fmt.Errorf("parsing YAML: %w", err)
+	}
+	if doc.Kind != yaml.DocumentNode || len(doc.Content) == 0 {
+		return nil, nil
+	}
+	root := doc.Content[0]
+	if root.Kind != yaml.MappingNode {
+		return nil, nil
+	}
+
+	var refs []GitLabImageRef
+	for i := 0; i+1 < len(root.Content); i += 2 {
+		name := root.Content[i].Value
+		value := root.Content[i+1]
+		if value.Kind != yaml.MappingNode {
+			continue
+		}
+		imageNode := findMapValue(value, "image")
+		if imageNode == nil || imageNode.Kind != yaml.ScalarNode || imageNode.Value == "" {
+			continue
+		}
+		refs = append(refs, GitLabImageRef{
+			Location: name + ".image",
+			ImageRef: imageNode.Value,
+			RawRef:   imageNode.Value,
+			Line:     imageNode.Line,
+		})
+	}
+	return refs, nil
+}
+
+func findMapValue(node *yaml.Node, key string) *yaml.Node {
+	if node.Kind != yaml.MappingNode {
+		return nil
+	}
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		if node.Content[i].Value == key {
+			return node.Content[i+1]
+		}
+	}
+	return nil
+}
