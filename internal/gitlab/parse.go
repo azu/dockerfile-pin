@@ -2,6 +2,7 @@ package gitlab
 
 import (
 	"fmt"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -11,6 +12,7 @@ type GitLabImageRef struct {
 	Location string // human-readable path, e.g. "build.image"
 	ImageRef string // image ref without digest
 	RawRef   string // as written in the file
+	Digest   string // existing digest if already pinned
 	Line     int    // 1-based line number
 }
 
@@ -96,12 +98,17 @@ func makeRef(node *yaml.Node, location string) *GitLabImageRef {
 	if node == nil || node.Kind != yaml.ScalarNode || node.Value == "" {
 		return nil
 	}
-	return &GitLabImageRef{
+	ref := &GitLabImageRef{
 		Location: location,
 		ImageRef: node.Value,
 		RawRef:   node.Value,
 		Line:     node.Line,
 	}
+	if atIdx := strings.Index(node.Value, "@"); atIdx >= 0 {
+		ref.ImageRef = node.Value[:atIdx]
+		ref.Digest = node.Value[atIdx+1:]
+	}
+	return ref
 }
 
 func findMapValue(node *yaml.Node, key string) *yaml.Node {
