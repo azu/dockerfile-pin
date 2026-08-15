@@ -62,6 +62,38 @@ build:
 	}
 }
 
+// A reference assembled from CI variables cannot be resolved against a
+// registry, because the variable values are only known to the running
+// pipeline. Such references are reported and left alone.
+func TestParse_VariableInterpolation(t *testing.T) {
+	content := []byte(`
+build:
+  image: $CI_REGISTRY_IMAGE:latest
+test:
+  image: ${NODE_IMAGE}
+deploy:
+  image: alpine:3.20
+`)
+	refs, err := Parse(content)
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if len(refs) != 3 {
+		t.Fatalf("got %d refs, want 3", len(refs))
+	}
+	for _, index := range []int{0, 1} {
+		if !refs[index].Skip {
+			t.Errorf("[%d] Skip = false, want true for %q", index, refs[index].RawRef)
+		}
+		if refs[index].SkipReason == "" {
+			t.Errorf("[%d] SkipReason is empty", index)
+		}
+	}
+	if refs[2].Skip {
+		t.Errorf("[2] Skip = true, want false for %q", refs[2].RawRef)
+	}
+}
+
 func TestParse_AlreadyPinned(t *testing.T) {
 	content := []byte(`
 build:
