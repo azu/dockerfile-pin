@@ -55,6 +55,74 @@ func TestApplyDockerfile_UpdateExistingDigest(t *testing.T) {
 	}
 }
 
+const gitlabCIContent = `default:
+  image: node:24
+test:
+  image: $CI_REGISTRY_IMAGE:latest
+  services:
+    - postgres:18
+    - name: ghcr.io/myorg/internal:v1
+      alias: internal
+`
+
+func TestParseFile_GitLabCollectsImageRefs(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".gitlab-ci.yml")
+	if err := os.WriteFile(path, []byte(gitlabCIContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	pf, err := parseFile(path, false, []string{"ghcr.io/myorg/*"})
+	if err != nil {
+		t.Fatalf("parseFile() error = %v", err)
+	}
+	if pf.fileType != FileTypeGitLab {
+		t.Errorf("fileType = %d, want %d", pf.fileType, FileTypeGitLab)
+	}
+	want := []string{"node:24", "postgres:18"}
+	if len(pf.imageRefs) != len(want) {
+		t.Fatalf("imageRefs = %v, want %v", pf.imageRefs, want)
+	}
+	for i, w := range want {
+		if pf.imageRefs[i] != w {
+			t.Errorf("imageRefs[%d] = %q, want %q", i, pf.imageRefs[i], w)
+		}
+	}
+}
+
+func TestApplyGitLab_WritesDigests(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".gitlab-ci.yml")
+	if err := os.WriteFile(path, []byte(gitlabCIContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	pf, err := parseFile(path, false, nil)
+	if err != nil {
+		t.Fatalf("parseFile() error = %v", err)
+	}
+	applyGitLab(pf, map[string]string{
+		"node:24":                   "sha256:aaa111",
+		"postgres:18":               "sha256:bbb222",
+		"ghcr.io/myorg/internal:v1": "sha256:ccc333",
+	}, false, false)
+
+	result, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"image: node:24@sha256:aaa111",
+		"- postgres:18@sha256:bbb222",
+		"- name: ghcr.io/myorg/internal:v1@sha256:ccc333",
+		"image: $CI_REGISTRY_IMAGE:latest",
+	} {
+		if !strings.Contains(string(result), want) {
+			t.Errorf("missing %q in:\n%s", want, string(result))
+		}
+	}
+}
+
 func TestApplyDockerfile_SkipExistingDigestWithoutUpdate(t *testing.T) {
 	content := "FROM node:20.11.1@sha256:olddigest111\nFROM golang:1.22\n"
 	dir := t.TempDir()
