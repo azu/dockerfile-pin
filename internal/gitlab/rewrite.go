@@ -2,8 +2,8 @@ package gitlab
 
 import "strings"
 
-// RewriteFile applies digests to a GitLab CI file, returning the modified
-// content. Keys of digests are indices into refs.
+// RewriteFile applies digests to a GitLab CI file, returning the modified content.
+// Keys of digests are indices into refs.
 func RewriteFile(content string, refs []GitLabImageRef, digests map[int]string) string {
 	lines := strings.Split(content, "\n")
 	for i, ref := range refs {
