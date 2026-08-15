@@ -35,9 +35,9 @@ func DetectFileType(path string) FileType {
 		return FileTypeActions
 	}
 
-	// GitLab CI files. Templates pulled in with include: follow no naming
-	// convention, so only the default filename is recognised.
-	if lower == ".gitlab-ci.yml" || lower == ".gitlab-ci.yaml" {
+	// GitLab CI files. GitLab reads this one name and no other, so a split or
+	// renamed configuration is named with -f instead.
+	if lower == ".gitlab-ci.yml" {
 		return FileTypeGitLab
 	}
 
@@ -50,7 +50,7 @@ func DetectFileType(path string) FileType {
 }
 
 // defaultGlob is used when neither -f nor --glob is specified.
-const defaultGlob = "**/{Dockerfile,Dockerfile.*,docker-compose*.yml,docker-compose*.yaml,compose.yml,compose.yaml,action.yml,action.yaml,.gitlab-ci.yml,.gitlab-ci.yaml,.github/workflows/*.yml,.github/workflows/*.yaml}"
+const defaultGlob = "**/{Dockerfile,Dockerfile.*,docker-compose*.yml,docker-compose*.yaml,compose.yml,compose.yaml,action.yml,action.yaml,.gitlab-ci.yml,.github/workflows/*.yml,.github/workflows/*.yaml}"
 
 func FindFiles(filePath string, globPattern string) ([]string, error) {
 	if filePath != "" {

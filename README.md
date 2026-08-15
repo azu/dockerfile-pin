@@ -324,7 +324,7 @@ ignore-images:
 
 ### GitLab CI files (`.gitlab-ci.yml`)
 
-Only the default configuration filename is recognised. Templates pulled in with `include:` have no naming convention that distinguishes them from other YAML, so they need `-f` or `--glob`.
+Only `.gitlab-ci.yml` is recognised, which is the one name GitLab reads. A configuration under another name, or split into templates pulled in with `include:`, needs `-f` or `--glob`.
 
 A file that opens with a CI component `spec:` header document is scanned in full; every YAML document in the file is read, not only the one before `---`.
 
@@ -385,7 +385,7 @@ jobs:
 `dockerfile-pin check` exits with code 1 if any image is missing a digest.
 
 When `-f` and `--glob` are omitted, it auto-detects target files using `git ls-files` filtered by the default glob pattern:
-`**/{Dockerfile,Dockerfile.*,docker-compose*.yml,docker-compose*.yaml,compose.yml,compose.yaml,action.yml,action.yaml,.gitlab-ci.yml,.gitlab-ci.yaml,.github/workflows/*.yml,.github/workflows/*.yaml}`
+`**/{Dockerfile,Dockerfile.*,docker-compose*.yml,docker-compose*.yaml,compose.yml,compose.yaml,action.yml,action.yaml,.gitlab-ci.yml,.github/workflows/*.yml,.github/workflows/*.yaml}`
 
 Outside a git repository, it falls back to the same glob pattern with common directories (`node_modules`, `vendor`) excluded.
 
