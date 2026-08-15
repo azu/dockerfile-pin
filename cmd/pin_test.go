@@ -123,6 +123,76 @@ func TestApplyGitLab_WritesDigests(t *testing.T) {
 	}
 }
 
+func TestApplyGitLab_UpdateExistingDigests(t *testing.T) {
+	content := `default:
+  image: node:24@sha256:old111
+test:
+  services:
+    - name: postgres:18@sha256:old222
+`
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".gitlab-ci.yml")
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	pf, err := parseFile(path, true, nil)
+	if err != nil {
+		t.Fatalf("parseFile() error = %v", err)
+	}
+	if len(pf.imageRefs) != 2 {
+		t.Fatalf("imageRefs = %v, want both pinned refs collected for re-resolution", pf.imageRefs)
+	}
+
+	applyGitLab(pf, map[string]string{
+		"node:24":     "sha256:new111",
+		"postgres:18": "sha256:new222",
+	}, false, true)
+
+	result, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"image: node:24@sha256:new111",
+		"- name: postgres:18@sha256:new222",
+	} {
+		if !strings.Contains(string(result), want) {
+			t.Errorf("missing %q in:\n%s", want, string(result))
+		}
+	}
+	for _, unwanted := range []string{"sha256:old111", "sha256:old222"} {
+		if strings.Contains(string(result), unwanted) {
+			t.Errorf("old digest %q remains in:\n%s", unwanted, string(result))
+		}
+	}
+}
+
+func TestApplyGitLab_KeepsExistingDigestsWithoutUpdate(t *testing.T) {
+	content := `default:
+  image: node:24@sha256:old111
+`
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".gitlab-ci.yml")
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	pf, err := parseFile(path, false, nil)
+	if err != nil {
+		t.Fatalf("parseFile() error = %v", err)
+	}
+	applyGitLab(pf, map[string]string{"node:24": "sha256:new111"}, false, false)
+
+	result, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(result) != content {
+		t.Errorf("already-pinned file was rewritten without --update:\n%s", string(result))
+	}
+}
+
 func TestApplyDockerfile_SkipExistingDigestWithoutUpdate(t *testing.T) {
 	content := "FROM node:20.11.1@sha256:olddigest111\nFROM golang:1.22\n"
 	dir := t.TempDir()
