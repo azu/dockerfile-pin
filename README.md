@@ -324,7 +324,17 @@ ignore-images:
 
 ### GitLab CI files (`.gitlab-ci.yml`)
 
-Only `.gitlab-ci.yml` is recognised, which is the one name GitLab reads. A configuration under another name, or split into templates pulled in with `include:`, needs `-f` or `--glob`.
+Only `.gitlab-ci.yml` is found by the default search, which is the one name GitLab reads.
+
+Three further layouts are recognised as GitLab CI when named with `-f` or `--glob`. They are not searched for by default, because `templates` is an ordinary directory name that other tools use and the `.gitlab/ci` convention is not something GitLab defines.
+
+| Layout | Recognised |
+|--------|------------|
+| `.gitlab-ci.yml` | Yes, and found by default |
+| `templates/<name>.yml` (CI component) | Yes, with `-f` or `--glob` |
+| `templates/<name>/template.yml` (CI component) | Yes, with `-f` or `--glob` |
+| `.gitlab/ci/**/*.yml` (pulled in with `include: local:`) | Yes, with `-f` or `--glob` |
+| Any other name | Treated as a compose file |
 
 A file that opens with a CI component `spec:` header document is scanned in full; every YAML document in the file is read, not only the one before `---`.
 
