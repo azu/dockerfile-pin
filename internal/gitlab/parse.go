@@ -13,6 +13,7 @@ import (
 // GitLabImageRef represents a Docker image reference found in a GitLab CI file.
 type GitLabImageRef struct {
 	Location string // human-readable path, e.g. "build.image"
+	Key      string // YAML key holding the reference, empty for a sequence entry
 	ImageRef string // image ref without digest
 	RawRef   string // as written in the file
 	Digest   string // existing digest if already pinned
@@ -25,8 +26,9 @@ type GitLabImageRef struct {
 // nonJobKeywords are the global keywords of a GitLab CI file. Every other
 // root-level mapping is a job, including hidden templates such as `.build`.
 // `default` is deliberately absent because it carries images for all jobs.
-// `image` and `services` are listed because the deprecated root form of
-// `image:` may be a mapping, which would otherwise look like a job.
+// `image` is listed because its deprecated root form may be a mapping, which
+// would otherwise look like a job; the remaining keywords are listed for
+// completeness, their values not being mappings.
 //
 // `spec` occupies a header document of its own rather than sitting beside the
 // jobs, and is listed so that a component's inputs are not read as a job.
@@ -69,70 +71,60 @@ func parseDocument(root *yaml.Node) []GitLabImageRef {
 		return nil
 	}
 
-	var refs []GitLabImageRef
-	if ref := parseImage(findMapValue(root, "image"), "image"); ref != nil {
-		refs = append(refs, *ref)
-	}
-	refs = append(refs, parseServices(findMapValue(root, "services"), "services")...)
-
+	refs := parseScope(root, "")
 	for i := 0; i+1 < len(root.Content); i += 2 {
 		name := root.Content[i].Value
 		value := root.Content[i+1]
 		if value.Kind != yaml.MappingNode || nonJobKeywords[name] {
 			continue
 		}
-		if ref := parseImage(findMapValue(value, "image"), name+".image"); ref != nil {
+		refs = append(refs, parseScope(value, name+".")...)
+	}
+	return refs
+}
+
+// parseScope reads the `image:` and `services:` of one mapping. The same pair
+// appears at the root, under `default:`, and in every job, so the three are
+// read the same way and told apart only by the location prefix.
+func parseScope(node *yaml.Node, prefix string) []GitLabImageRef {
+	var refs []GitLabImageRef
+	if ref := parseImageValue(findMapValue(node, "image"), prefix+"image", "image"); ref != nil {
+		refs = append(refs, *ref)
+	}
+	services := findMapValue(node, "services")
+	if services == nil || services.Kind != yaml.SequenceNode {
+		return refs
+	}
+	for i, entry := range services.Content {
+		location := fmt.Sprintf("%sservices[%d]", prefix, i)
+		if ref := parseImageValue(entry, location, ""); ref != nil {
 			refs = append(refs, *ref)
 		}
-		refs = append(refs, parseServices(findMapValue(value, "services"), name+".services")...)
 	}
 	return refs
 }
 
-// parseServices reads a `services:` sequence. Each entry is either a scalar or
-// a mapping whose `name:` holds the reference; GitLab has no `image:` key here.
-func parseServices(node *yaml.Node, location string) []GitLabImageRef {
-	if node == nil || node.Kind != yaml.SequenceNode {
-		return nil
-	}
-	var refs []GitLabImageRef
-	for i, entry := range node.Content {
-		entryLocation := fmt.Sprintf("%s[%d]", location, i)
-		switch entry.Kind {
-		case yaml.ScalarNode:
-			if ref := makeRef(entry, entryLocation); ref != nil {
-				refs = append(refs, *ref)
-			}
-		case yaml.MappingNode:
-			if ref := makeRef(findMapValue(entry, "name"), entryLocation+".name"); ref != nil {
-				refs = append(refs, *ref)
-			}
-		}
-	}
-	return refs
-}
-
-// parseImage reads an `image:` value, which GitLab allows to be either a
-// scalar or a mapping whose `name:` holds the reference.
-func parseImage(node *yaml.Node, location string) *GitLabImageRef {
+// parseImageValue reads a value that is either a scalar reference or a mapping
+// whose `name:` holds it. Both `image:` and each `services:` entry take those
+// two forms; GitLab has no `image:` key inside a service entry. scalarKey names
+// the key the scalar form sits under, and is empty for a sequence entry.
+func parseImageValue(node *yaml.Node, location string, scalarKey string) *GitLabImageRef {
 	if node == nil {
 		return nil
 	}
-	switch node.Kind {
-	case yaml.ScalarNode:
-		return makeRef(node, location)
-	case yaml.MappingNode:
-		return makeRef(findMapValue(node, "name"), location+".name")
+	if node.Kind == yaml.MappingNode {
+		return makeRef(findMapValue(node, "name"), location+".name", "name")
 	}
-	return nil
+	return makeRef(node, location, scalarKey)
 }
 
-func makeRef(node *yaml.Node, location string) *GitLabImageRef {
+func makeRef(node *yaml.Node, location string, key string) *GitLabImageRef {
 	if node == nil || node.Kind != yaml.ScalarNode || node.Value == "" {
 		return nil
 	}
 	ref := &GitLabImageRef{
 		Location: location,
+		Key:      key,
 		ImageRef: node.Value,
 		RawRef:   node.Value,
 		Line:     node.Line,

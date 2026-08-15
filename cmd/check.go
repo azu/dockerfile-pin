@@ -400,14 +400,10 @@ func parseGitLabForCheck(filePath string, syntaxOnly bool, ignoreImages []string
 // check output. A service entry written as a scalar has no key of its own, so
 // it is shown with the sequence dash instead.
 func gitlabOriginal(ref gitlab.GitLabImageRef) string {
-	switch {
-	case strings.HasSuffix(ref.Location, ".name"):
-		return "name: " + ref.RawRef
-	case strings.HasSuffix(ref.Location, "]"):
+	if ref.Key == "" {
 		return "- " + ref.RawRef
-	default:
-		return "image: " + ref.RawRef
 	}
+	return ref.Key + ": " + ref.RawRef
 }
 
 // actionsOriginal returns a human-readable "key: value" string for check output,
