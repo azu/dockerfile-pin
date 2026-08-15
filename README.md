@@ -326,11 +326,12 @@ ignore-images:
 
 Only `.gitlab-ci.yml` is found by the default search, which is the one name GitLab reads.
 
-Three further layouts are recognised as GitLab CI when named with `-f` or `--glob`. They are not searched for by default, because `templates` is an ordinary directory name that other tools use and the `.gitlab/ci` convention is not something GitLab defines.
+Further layouts are recognised as GitLab CI when named with `-f` or `--glob`. They are not searched for by default, because `templates` is an ordinary directory name that other tools use and the `.gitlab/ci` convention is not something GitLab defines.
 
 | Layout | Recognised |
 |--------|------------|
 | `.gitlab-ci.yml` | Yes, and found by default |
+| `*.gitlab-ci.yml` (a pipeline split into parts) | Yes, with `-f` or `--glob` |
 | `templates/<name>.yml` (CI component) | Yes, with `-f` or `--glob` |
 | `templates/<name>/template.yml` (CI component) | Yes, with `-f` or `--glob` |
 | `.gitlab/ci/**/*.yml` (pulled in with `include: local:`) | Yes, with `-f` or `--glob` |
