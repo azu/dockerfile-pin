@@ -139,6 +139,8 @@ func TestDetectFileType(t *testing.T) {
 		{"templates/secret-detection.yml", FileTypeGitLab},
 		{"templates/secret-detection/template.yml", FileTypeGitLab},
 		{"templates/secret-detection.yaml", FileTypeCompose},
+		{"templates/docker-compose.yml", FileTypeCompose},
+		{"templates/compose.yml", FileTypeCompose},
 		{"templates/secret-detection/other.yml", FileTypeCompose},
 		{"templates/group/nested/template.yml", FileTypeCompose},
 	}
