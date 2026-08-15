@@ -14,6 +14,9 @@ type GitLabImageRef struct {
 	RawRef   string // as written in the file
 	Digest   string // existing digest if already pinned
 	Line     int    // 1-based line number
+
+	Skip       bool
+	SkipReason string
 }
 
 // nonJobKeywords are the global keywords of a GitLab CI file. Every other
@@ -107,6 +110,11 @@ func makeRef(node *yaml.Node, location string) *GitLabImageRef {
 	if atIdx := strings.Index(node.Value, "@"); atIdx >= 0 {
 		ref.ImageRef = node.Value[:atIdx]
 		ref.Digest = node.Value[atIdx+1:]
+	}
+	// A CI variable is substituted by the runner, so its value is unknown here.
+	if strings.Contains(node.Value, "$") {
+		ref.Skip = true
+		ref.SkipReason = "contains CI variable"
 	}
 	return ref
 }
