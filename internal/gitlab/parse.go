@@ -14,6 +14,17 @@ type GitLabImageRef struct {
 	Line     int    // 1-based line number
 }
 
+// nonJobKeywords are the global keywords of a GitLab CI file. Every other
+// root-level mapping is a job, including hidden templates such as `.build`.
+// `default` is deliberately absent because it carries images for all jobs.
+var nonJobKeywords = map[string]bool{
+	"include":   true,
+	"spec":      true,
+	"stages":    true,
+	"variables": true,
+	"workflow":  true,
+}
+
 // Parse parses a GitLab CI file and returns the Docker image references it declares.
 func Parse(content []byte) ([]GitLabImageRef, error) {
 	var doc yaml.Node
@@ -32,7 +43,7 @@ func Parse(content []byte) ([]GitLabImageRef, error) {
 	for i := 0; i+1 < len(root.Content); i += 2 {
 		name := root.Content[i].Value
 		value := root.Content[i+1]
-		if value.Kind != yaml.MappingNode {
+		if value.Kind != yaml.MappingNode || nonJobKeywords[name] {
 			continue
 		}
 		if ref := parseImage(findMapValue(value, "image"), name+".image"); ref != nil {
