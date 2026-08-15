@@ -73,9 +73,10 @@ func parseImages(root *yaml.Node) []GitLabImageRef {
 	return refs
 }
 
-// parseGlobalImages reads the root form, which GitLab deprecated in favour of
-// declaring the same keywords under `default:`.
+// parseGlobalImages reads images written at the root of the file.
 func parseGlobalImages(root *yaml.Node) []GitLabImageRef {
+	// Declaring them at the root is deprecated, but GitLab still accepts it.
+	// https://docs.gitlab.com/ci/yaml/deprecated_keywords/#globally-defined-image-services-cache-before_script-after_script
 	return imageRefsIn(root, "")
 }
 
