@@ -24,6 +24,10 @@ type GitLabImageRef struct {
 // `default` is deliberately absent because it carries images for all jobs.
 // `image` and `services` are listed because the deprecated root form of
 // `image:` may be a mapping, which would otherwise look like a job.
+//
+// `spec` never actually appears here: it lives in a header document that is
+// separated from the configuration by `---`, and only the first document is
+// read. A file using it therefore yields no references at all.
 var nonJobKeywords = map[string]bool{
 	"image":     true,
 	"include":   true,

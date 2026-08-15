@@ -326,6 +326,8 @@ ignore-images:
 
 Only the default configuration filename is recognised. Templates pulled in with `include:` have no naming convention that distinguishes them from other YAML, so they need `-f` or `--glob`.
 
+A file that opens with a CI component `spec:` header document is not scanned at all: only the document before `---` is read, so `check` reports nothing and exits 0 even when images are unpinned.
+
 | Pattern | Supported |
 |---------|-----------|
 | `<job>.image: node:20` | Yes |
@@ -337,7 +339,8 @@ Only the default configuration filename is recognised. Templates pulled in with 
 | Hidden job templates (`.build:`) | Yes |
 | `image: $CI_REGISTRY_IMAGE:tag` | Skipped (built from a CI variable) |
 | `image: node:20@sha256:...` | Skipped (use `--update`) |
-| Global keywords (`variables`, `workflow`, `include`, `stages`, `spec`) | Not scanned |
+| Global keywords (`variables`, `workflow`, `include`, `stages`) | Not scanned |
+| Files with a component `spec:` header document | Not scanned |
 
 ## CI Integration
 
