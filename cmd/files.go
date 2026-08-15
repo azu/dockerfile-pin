@@ -35,8 +35,9 @@ func DetectFileType(path string) FileType {
 		return FileTypeActions
 	}
 
-	// GitLab CI files
-	if lower == ".gitlab-ci.yml" || isComponentTemplate(normalized) {
+	// GitLab CI files. The suffix names the format, so a pipeline split into
+	// parts keeps it wherever the parts are kept.
+	if strings.HasSuffix(lower, ".gitlab-ci.yml") || isComponentTemplate(normalized) {
 		return FileTypeGitLab
 	}
 
