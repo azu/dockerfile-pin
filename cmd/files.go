@@ -51,7 +51,7 @@ func DetectFileType(path string) FileType {
 }
 
 // defaultGlob is used when neither -f nor --glob is specified.
-const defaultGlob = "**/{Dockerfile,Dockerfile.*,docker-compose*.yml,docker-compose*.yaml,compose.yml,compose.yaml,action.yml,action.yaml,.github/workflows/*.yml,.github/workflows/*.yaml}"
+const defaultGlob = "**/{Dockerfile,Dockerfile.*,docker-compose*.yml,docker-compose*.yaml,compose.yml,compose.yaml,action.yml,action.yaml,.gitlab-ci.yml,.gitlab-ci.yaml,.github/workflows/*.yml,.github/workflows/*.yaml}"
 
 func FindFiles(filePath string, globPattern string) ([]string, error) {
 	if filePath != "" {
@@ -81,7 +81,7 @@ func FindFiles(filePath string, globPattern string) ([]string, error) {
 		return nil, err
 	}
 	if len(matches) == 0 {
-		return nil, fmt.Errorf("no Dockerfiles, compose files, or GitHub Actions files found")
+		return nil, fmt.Errorf("no Dockerfiles, compose files, GitHub Actions files, or GitLab CI files found")
 	}
 	return matches, nil
 }
