@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -67,12 +68,8 @@ func DetectFileType(path string) FileType {
 	return FileTypeDockerfile
 }
 
-// isComponentTemplate reports whether path is a CI component template. GitLab
-// publishes a component from templates/<name>.yml or from
-// templates/<name>/template.yml, and accepts no other layout.
-// https://docs.gitlab.com/ci/components/
-// isComposeName reports whether base is one of the compose filenames, which are
-// the names the default search looks for.
+// isComposeName reports whether base is one of the compose filenames the
+// default search looks for.
 func isComposeName(base string) bool {
 	if base == "compose.yml" || base == "compose.yaml" {
 		return true
@@ -81,9 +78,14 @@ func isComposeName(base string) bool {
 		(strings.HasSuffix(base, ".yml") || strings.HasSuffix(base, ".yaml"))
 }
 
+// isComponentTemplate reports whether path is a CI component template.
+// GitLab publishes components only from a templates directory at the
+// repository root, so the patterns match from the root.
+// https://docs.gitlab.com/ci/components/
 func isComponentTemplate(normalized string) bool {
-	for _, pattern := range []string{"**/templates/*.yml", "**/templates/*/template.yml"} {
-		if ok, err := doublestar.Match(pattern, normalized); err == nil && ok {
+	cleaned := path.Clean(normalized)
+	for _, pattern := range []string{"templates/*.yml", "templates/*/template.yml"} {
+		if ok, err := doublestar.Match(pattern, cleaned); err == nil && ok {
 			return true
 		}
 	}
