@@ -324,9 +324,7 @@ ignore-images:
 
 ### GitLab CI files (`.gitlab-ci.yml`)
 
-Only `.gitlab-ci.yml` is found by the default search, which is the one name GitLab reads.
-
-Further layouts are recognised as GitLab CI when named with `-f` or `--glob`. They are not searched for by default, because `templates` is an ordinary directory name that other tools use and the `.gitlab/ci` convention is not something GitLab defines.
+The default search finds only `.gitlab-ci.yml`, the one name GitLab reads. The layouts below are also recognised when named with `-f` or `--glob`, but are not searched for by default, because `templates` is an ordinary directory name that other tools use and the `.gitlab/ci` convention is not something GitLab defines.
 
 | Layout | Recognised |
 |--------|------------|
@@ -337,7 +335,9 @@ Further layouts are recognised as GitLab CI when named with `-f` or `--glob`. Th
 | `.gitlab/ci/**/*.yml` (pulled in with `include: local:`) | Yes, with `-f` or `--glob` |
 | Any other name | Treated as a compose file |
 
-A file that opens with a CI component `spec:` header document is scanned in full; every YAML document in the file is read, not only the one before `---`.
+The two component rows are matched from the root, because GitLab requires a component's `templates` directory to be at the root of the repository; name such a file by a path relative to that root, not an absolute one or one reaching up with `..`. The compose filenames keep their own handling wherever they sit, so a `templates/docker-compose.yml` is still a compose file.
+
+The keywords read inside a recognised file are the following.
 
 | Pattern | Supported |
 |---------|-----------|
