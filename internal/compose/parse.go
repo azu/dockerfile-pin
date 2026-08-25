@@ -13,6 +13,7 @@ type ComposeImageRef struct {
 	RawRef      string // as written
 	Digest      string
 	Line        int // 1-based line number of image: value
+	Column      int // 1-based column of the value, so images sharing a line stay apart
 	Skip        bool
 	SkipReason  string
 }
@@ -54,6 +55,7 @@ func Parse(content []byte) ([]ComposeImageRef, error) {
 			ServiceName: serviceName,
 			RawRef:      rawRef,
 			Line:        imageNode.Line,
+			Column:      imageNode.Column,
 		}
 		if hasBuild {
 			ref.ImageRef = rawRef
