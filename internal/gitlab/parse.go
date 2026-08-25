@@ -18,6 +18,7 @@ type GitLabImageRef struct {
 	RawRef     string // as written in the file
 	Digest     string // existing digest if already pinned
 	Line       int    // 1-based line number
+	Column     int    // 1-based column of the reference, so entries sharing a line stay apart
 	Skip       bool
 	SkipReason string
 }
@@ -124,6 +125,7 @@ func makeRef(node *yaml.Node, location string, key string) *GitLabImageRef {
 		ImageRef: node.Value,
 		RawRef:   node.Value,
 		Line:     node.Line,
+		Column:   node.Column,
 	}
 	if atIdx := strings.Index(node.Value, "@"); atIdx >= 0 {
 		ref.ImageRef = node.Value[:atIdx]

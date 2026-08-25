@@ -202,3 +202,97 @@ jobs:
 		t.Error("non-docker step should be unchanged")
 	}
 }
+
+// A flow mapping writes several services on one line, and one image may be a
+// prefix of another, so replacing by text alone would match inside the wrong one.
+func TestRewriteFile_FlowMappingPrefixSharingServices(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    string
+	}{
+		{
+			name:    "later image is a prefix of an earlier one",
+			content: "jobs:\n  test:\n    services: {a: {image: postgres:18}, b: {image: postgres}}\n",
+			want:    "    services: {a: {image: postgres:18@sha256:aaa111}, b: {image: postgres@sha256:bbb222}}",
+		},
+		{
+			name:    "identical images",
+			content: "jobs:\n  test:\n    services: {a: {image: postgres}, b: {image: postgres}}\n",
+			want:    "    services: {a: {image: postgres@sha256:aaa111}, b: {image: postgres@sha256:bbb222}}",
+		},
+		{
+			name:    "quoted images",
+			content: "jobs:\n  test:\n    services: {a: {image: \"postgres:18\"}, b: {image: 'postgres'}}\n",
+			want:    "    services: {a: {image: \"postgres:18@sha256:aaa111\"}, b: {image: 'postgres@sha256:bbb222'}}",
+		},
+		{
+			name:    "earlier image already pinned",
+			content: "jobs:\n  test:\n    services: {a: {image: postgres:18@sha256:old111}, b: {image: postgres}}\n",
+			want:    "    services: {a: {image: postgres:18@sha256:aaa111}, b: {image: postgres@sha256:bbb222}}",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			refs, err := Parse([]byte(tt.content))
+			if err != nil {
+				t.Fatalf("Parse() error = %v", err)
+			}
+			if len(refs) != 2 {
+				t.Fatalf("Parse() returned %d refs, want 2", len(refs))
+			}
+			result := RewriteFile(tt.content, refs, map[int]string{
+				0: "sha256:aaa111",
+				1: "sha256:bbb222",
+			})
+
+			if !strings.Contains(result, tt.want) {
+				t.Errorf("got:\n%s\nwant line %q", result, tt.want)
+			}
+		})
+	}
+}
+
+// A flow sequence of steps puts two docker:// references on one line.
+func TestRewriteFile_FlowSequenceDockerSteps(t *testing.T) {
+	content := "jobs:\n  test:\n    steps: [{uses: docker://postgres:18}, {uses: docker://postgres}]\n"
+	refs, err := Parse([]byte(content))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if len(refs) != 2 {
+		t.Fatalf("Parse() returned %d refs, want 2", len(refs))
+	}
+	result := RewriteFile(content, refs, map[int]string{
+		0: "sha256:aaa111",
+		1: "sha256:bbb222",
+	})
+
+	want := "    steps: [{uses: docker://postgres:18@sha256:aaa111}, {uses: docker://postgres@sha256:bbb222}]"
+	if !strings.Contains(result, want) {
+		t.Errorf("got:\n%s\nwant line %q", result, want)
+	}
+}
+
+// A real digest is far longer than the image it is appended to, so pinning one
+// image moves every image after it well past the column it was written at.
+func TestRewriteFile_FlowMappingRealDigestLengths(t *testing.T) {
+	content := "jobs:\n  test:\n    services: {a: {image: postgres:18}, b: {image: postgres}, c: {image: postgres:18-alpine}}\n"
+	refs, err := Parse([]byte(content))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	digests := map[int]string{
+		0: "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+		1: "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+		2: "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+	}
+	result := RewriteFile(content, refs, digests)
+
+	want := "jobs:\n  test:\n    services: {a: {image: postgres:18@" + digests[0] +
+		"}, b: {image: postgres@" + digests[1] +
+		"}, c: {image: postgres:18-alpine@" + digests[2] + "}}\n"
+	if result != want {
+		t.Errorf("got:\n%s\nwant:\n%s", result, want)
+	}
+}
