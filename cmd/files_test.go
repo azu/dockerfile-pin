@@ -125,6 +125,27 @@ func TestDetectFileType(t *testing.T) {
 		{"action.yaml", FileTypeActions},
 		{"subdir/action.yml", FileTypeActions},
 		{"my-action/action.yaml", FileTypeActions},
+		{".gitlab-ci.yml", FileTypeGitLab},
+		{"subdir/.gitlab-ci.yml", FileTypeGitLab},
+		{".gitlab-ci.yaml", FileTypeCompose},
+		{"build.gitlab-ci.yml", FileTypeGitLab},
+		{"ci/rules.gitlab-ci.yml", FileTypeGitLab},
+		{"build.gitlab-ci.yaml", FileTypeCompose},
+		{".gitlab/ci/test.yml", FileTypeGitLab},
+		{".gitlab/ci/jobs/build.yml", FileTypeGitLab},
+		{".gitlab/ci/test.yaml", FileTypeGitLab},
+		{".gitlab/route-map.yml", FileTypeCompose},
+		{".gitlab/insights.yml", FileTypeCompose},
+		{"templates/secret-detection.yml", FileTypeGitLab},
+		{"templates/secret-detection/template.yml", FileTypeGitLab},
+		{"./templates/secret-detection.yml", FileTypeGitLab},
+		{"repo/templates/secret-detection.yml", FileTypeCompose},
+		{"charts/app/templates/deployment.yml", FileTypeCompose},
+		{"templates/secret-detection.yaml", FileTypeCompose},
+		{"templates/docker-compose.yml", FileTypeCompose},
+		{"templates/compose.yml", FileTypeCompose},
+		{"templates/secret-detection/other.yml", FileTypeCompose},
+		{"templates/group/nested/template.yml", FileTypeCompose},
 	}
 	for _, tt := range tests {
 		got := DetectFileType(tt.path)
@@ -166,6 +187,59 @@ func TestFindFiles_DefaultIncludesActions(t *testing.T) {
 	}
 	if len(files) != 3 {
 		t.Errorf("FindFiles() returned %d files, want 3: %v", len(files), files)
+	}
+}
+
+func TestFindFiles_DefaultIncludesGitLabCI(t *testing.T) {
+	dir := t.TempDir()
+	for _, p := range []string{
+		filepath.Join(dir, "Dockerfile"),
+		filepath.Join(dir, ".gitlab-ci.yml"),
+	} {
+		if err := os.WriteFile(p, []byte("FROM node:20"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	initGitRepo(t, dir)
+	gitAdd(t, dir, ".")
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chdir(origDir) }()
+	files, err := FindFiles("", "")
+	if err != nil {
+		t.Fatalf("FindFiles() error = %v", err)
+	}
+	if len(files) != 2 {
+		t.Errorf("FindFiles() returned %d files, want 2: %v", len(files), files)
+	}
+}
+
+// Outside a git repository the search falls back to a separate matcher, which
+// needs its own coverage for a dotfile.
+func TestFindFiles_DefaultIncludesGitLabCIWithoutGit(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".gitlab-ci.yml"), []byte("build:\n  image: node:20\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chdir(origDir) }()
+	files, err := FindFiles("", "")
+	if err != nil {
+		t.Fatalf("FindFiles() error = %v", err)
+	}
+	if len(files) != 1 {
+		t.Errorf("FindFiles() returned %d files, want 1: %v", len(files), files)
 	}
 }
 

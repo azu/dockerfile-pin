@@ -13,6 +13,7 @@ import (
 	"github.com/azu/dockerfile-pin/internal/actions"
 	"github.com/azu/dockerfile-pin/internal/compose"
 	"github.com/azu/dockerfile-pin/internal/dockerfile"
+	"github.com/azu/dockerfile-pin/internal/gitlab"
 	"github.com/azu/dockerfile-pin/internal/resolver"
 	"github.com/spf13/cobra"
 )
@@ -26,7 +27,7 @@ digest exists in the registry.
 Each image is reported as one of:
   OK     digest present and verified in registry
   FAIL   missing digest, or digest not found in registry
-  SKIP   scratch, multi-stage ref, ignored, or non-Docker uses
+  SKIP   scratch, multi-stage ref, ignored, non-Docker uses, or CI variable
   WARN   registry check failed (network error, auth issue, etc.)
 
 Exit code is 1 (configurable with --exit-code) when any image has FAIL status.
@@ -112,6 +113,8 @@ func runCheck(cmd *cobra.Command, args []string) error {
 			fileResults, err = parseComposeForCheck(filePath, checkSyntaxOnly, ignorePatterns)
 		case FileTypeActions:
 			fileResults, err = parseActionsForCheck(filePath, checkSyntaxOnly, ignorePatterns)
+		case FileTypeGitLab:
+			fileResults, err = parseGitLabForCheck(filePath, checkSyntaxOnly, ignorePatterns)
 		default:
 			fileResults, err = parseDockerfileForCheck(filePath, checkSyntaxOnly, ignorePatterns)
 		}
@@ -343,6 +346,63 @@ func parseActionsForCheck(filePath string, syntaxOnly bool, ignoreImages []strin
 		})
 	}
 	return results, nil
+}
+
+func parseGitLabForCheck(filePath string, syntaxOnly bool, ignoreImages []string) ([]CheckResult, error) {
+	content, err := os.ReadFile(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("reading %s: %w", filePath, err)
+	}
+	refs, err := gitlab.Parse(content)
+	if err != nil {
+		return nil, fmt.Errorf("parsing %s: %w", filePath, err)
+	}
+	var results []CheckResult
+	for _, ref := range refs {
+		original := gitlabOriginal(ref)
+		if ref.Skip {
+			results = append(results, CheckResult{
+				File: filePath, Line: ref.Line, Image: ref.ImageRef,
+				Status: "skip", Message: ref.SkipReason, Original: original,
+			})
+			continue
+		}
+		if IsIgnored(ref.ImageRef, ignoreImages) {
+			results = append(results, CheckResult{
+				File: filePath, Line: ref.Line, Image: ref.ImageRef,
+				Status: "skip", Message: "ignored", Original: original,
+			})
+			continue
+		}
+		if ref.Digest == "" {
+			results = append(results, CheckResult{
+				File: filePath, Line: ref.Line, Image: ref.ImageRef,
+				Status: "fail", Message: "missing digest", Original: original,
+			})
+			continue
+		}
+		if syntaxOnly {
+			results = append(results, CheckResult{
+				File: filePath, Line: ref.Line, Image: ref.ImageRef,
+				Status: "ok", Message: "", Original: original,
+			})
+			continue
+		}
+		results = append(results, CheckResult{
+			File: filePath, Line: ref.Line, Image: ref.ImageRef,
+			Status: "pending", Message: ref.Digest, Original: original,
+		})
+	}
+	return results, nil
+}
+
+// gitlabOriginal renders the source line for check output. A scalar service
+// entry has no key, so it is shown with the sequence dash.
+func gitlabOriginal(ref gitlab.GitLabImageRef) string {
+	if ref.Key == "" {
+		return "- " + ref.RawRef
+	}
+	return ref.Key + ": " + ref.RawRef
 }
 
 // actionsOriginal returns a human-readable "key: value" string for check output,

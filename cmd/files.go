@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -16,6 +17,7 @@ const (
 	FileTypeDockerfile FileType = iota
 	FileTypeCompose
 	FileTypeActions
+	FileTypeGitLab
 )
 
 func DetectFileType(path string) FileType {
@@ -34,6 +36,30 @@ func DetectFileType(path string) FileType {
 		return FileTypeActions
 	}
 
+	// GitLab CI files. The suffix names the format, so a pipeline split into
+	// parts keeps it wherever the parts are kept.
+	if strings.HasSuffix(lower, ".gitlab-ci.yml") {
+		return FileTypeGitLab
+	}
+
+	// The compose filenames are claimed before the GitLab layouts below, which
+	// key on directory names that belong to no one in particular.
+	if isComposeName(lower) {
+		return FileTypeCompose
+	}
+
+	if isComponentTemplate(normalized) {
+		return FileTypeGitLab
+	}
+
+	// GitLab CI files split out and pulled back in with `include: local:`.
+	// The directory is a convention rather than something GitLab defines, but
+	// `.gitlab` itself holds features of its own, so only `ci` counts.
+	if strings.Contains(normalized, ".gitlab/ci/") &&
+		(strings.HasSuffix(lower, ".yml") || strings.HasSuffix(lower, ".yaml")) {
+		return FileTypeGitLab
+	}
+
 	// Compose files (any other YAML)
 	if strings.HasSuffix(lower, ".yml") || strings.HasSuffix(lower, ".yaml") {
 		return FileTypeCompose
@@ -42,8 +68,32 @@ func DetectFileType(path string) FileType {
 	return FileTypeDockerfile
 }
 
+// isComposeName reports whether base is one of the compose filenames the
+// default search looks for.
+func isComposeName(base string) bool {
+	if base == "compose.yml" || base == "compose.yaml" {
+		return true
+	}
+	return strings.HasPrefix(base, "docker-compose") &&
+		(strings.HasSuffix(base, ".yml") || strings.HasSuffix(base, ".yaml"))
+}
+
+// isComponentTemplate reports whether path is a CI component template.
+// GitLab publishes components only from a templates directory at the
+// repository root, so the patterns match from the root.
+// https://docs.gitlab.com/ci/components/
+func isComponentTemplate(normalized string) bool {
+	cleaned := path.Clean(normalized)
+	for _, pattern := range []string{"templates/*.yml", "templates/*/template.yml"} {
+		if ok, err := doublestar.Match(pattern, cleaned); err == nil && ok {
+			return true
+		}
+	}
+	return false
+}
+
 // defaultGlob is used when neither -f nor --glob is specified.
-const defaultGlob = "**/{Dockerfile,Dockerfile.*,docker-compose*.yml,docker-compose*.yaml,compose.yml,compose.yaml,action.yml,action.yaml,.github/workflows/*.yml,.github/workflows/*.yaml}"
+const defaultGlob = "**/{Dockerfile,Dockerfile.*,docker-compose*.yml,docker-compose*.yaml,compose.yml,compose.yaml,action.yml,action.yaml,.gitlab-ci.yml,.github/workflows/*.yml,.github/workflows/*.yaml}"
 
 func FindFiles(filePath string, globPattern string) ([]string, error) {
 	if filePath != "" {
@@ -73,7 +123,7 @@ func FindFiles(filePath string, globPattern string) ([]string, error) {
 		return nil, err
 	}
 	if len(matches) == 0 {
-		return nil, fmt.Errorf("no Dockerfiles, compose files, or GitHub Actions files found")
+		return nil, fmt.Errorf("no Dockerfiles, compose files, GitHub Actions files, or GitLab CI files found")
 	}
 	return matches, nil
 }

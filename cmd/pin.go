@@ -12,6 +12,7 @@ import (
 	"github.com/azu/dockerfile-pin/internal/actions"
 	"github.com/azu/dockerfile-pin/internal/compose"
 	"github.com/azu/dockerfile-pin/internal/dockerfile"
+	"github.com/azu/dockerfile-pin/internal/gitlab"
 	"github.com/azu/dockerfile-pin/internal/resolver"
 	"github.com/spf13/cobra"
 )
@@ -24,7 +25,7 @@ By default, prints the rewritten file to stdout without modifying it (dry-run).
 Use --write to apply changes in place.
 
 Supports Dockerfiles, docker-compose.yml/compose.yaml, GitHub Actions workflows,
-and action.yml files. File type is detected from filename.
+action.yml files, and .gitlab-ci.yml. File type is detected from filename.
 
 Skipped automatically:
   - "FROM scratch" (no registry image)
@@ -32,6 +33,7 @@ Skipped automatically:
   - ARG-only base images with no default value
   - Compose services with a "build:" directive
   - Non-docker "uses:" in GitHub Actions (e.g., actions/checkout@v4)
+  - GitLab CI images built from variables (e.g., $CI_REGISTRY_IMAGE:latest)
   - Already-pinned images (use --update to re-resolve)
 
 Digests are resolved via HEAD requests and do not count against Docker Hub pull limits.`,
@@ -82,6 +84,7 @@ type parsedFile struct {
 	dockerInsts []dockerfile.FromInstruction
 	composeRefs []compose.ComposeImageRef
 	actionsRefs []actions.ActionsImageRef
+	gitlabRefs  []gitlab.GitLabImageRef
 	content     []byte
 	imageRefs   []string // unique image refs that need resolving
 }
@@ -148,6 +151,8 @@ func runRun(cmd *cobra.Command, args []string) error {
 			applyCompose(pf, digestMap, dryRun, runUpdate)
 		case FileTypeActions:
 			applyActions(pf, digestMap, dryRun, runUpdate)
+		case FileTypeGitLab:
+			applyGitLab(pf, digestMap, dryRun, runUpdate)
 		default:
 			applyDockerfile(pf, digestMap, dryRun, runUpdate)
 		}
@@ -174,6 +179,18 @@ func parseFile(filePath string, update bool, ignorePatterns []string) (parsedFil
 			return parsedFile{}, fmt.Errorf("parsing %s: %w", filePath, err)
 		}
 		pf.composeRefs = refs
+		for _, ref := range refs {
+			if ref.Skip || (ref.Digest != "" && !update) || IsIgnored(ref.ImageRef, ignorePatterns) {
+				continue
+			}
+			pf.imageRefs = append(pf.imageRefs, ref.ImageRef)
+		}
+	case FileTypeGitLab:
+		refs, err := gitlab.Parse(content)
+		if err != nil {
+			return parsedFile{}, fmt.Errorf("parsing %s: %w", filePath, err)
+		}
+		pf.gitlabRefs = refs
 		for _, ref := range refs {
 			if ref.Skip || (ref.Digest != "" && !update) || IsIgnored(ref.ImageRef, ignorePatterns) {
 				continue
@@ -310,6 +327,32 @@ func applyActions(pf parsedFile, digestMap map[string]string, dryRun bool, updat
 		return
 	}
 	result := actions.RewriteFile(string(pf.content), pf.actionsRefs, digests)
+	if dryRun {
+		fmt.Printf("--- %s\n", pf.path)
+		fmt.Print(result)
+		return
+	}
+	if err := writeFilePreservingPerms(pf.path, []byte(result)); err != nil {
+		fmt.Fprintf(os.Stderr, "error writing %s: %v\n", pf.path, err)
+		return
+	}
+	fmt.Printf("pinned %d image(s) in %s\n", len(digests), pf.path)
+}
+
+func applyGitLab(pf parsedFile, digestMap map[string]string, dryRun bool, update bool) {
+	digests := make(map[int]string)
+	for i, ref := range pf.gitlabRefs {
+		if ref.Skip || (ref.Digest != "" && !update) {
+			continue
+		}
+		if d, ok := digestMap[ref.ImageRef]; ok {
+			digests[i] = d
+		}
+	}
+	if len(digests) == 0 {
+		return
+	}
+	result := gitlab.RewriteFile(string(pf.content), pf.gitlabRefs, digests)
 	if dryRun {
 		fmt.Printf("--- %s\n", pf.path)
 		fmt.Print(result)
