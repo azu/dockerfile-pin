@@ -19,7 +19,7 @@ import (
 
 var runCmd = &cobra.Command{
 	Use:   "run",
-	Short: "Pin FROM images to their digests",
+	Short: "Pin FROM and COPY --from images to their digests",
 	Long: `Resolve image tags to sha256 digests and add @sha256:<digest> to each reference.
 By default, prints the rewritten file to stdout without modifying it (dry-run).
 Use --write to apply changes in place.
@@ -27,9 +27,12 @@ Use --write to apply changes in place.
 Supports Dockerfiles, docker-compose.yml/compose.yaml, GitHub Actions workflows,
 action.yml files, and .gitlab-ci.yml. File type is detected from filename.
 
+Both "FROM image:tag" and "COPY --from=image:tag" are pinned.
+
 Skipped automatically:
   - "FROM scratch" (no registry image)
-  - Multi-stage references ("FROM builder")
+  - Multi-stage references ("FROM builder", "COPY --from=builder", "COPY --from=0")
+  - Variables in "COPY --from" (BuildKit does not expand them)
   - ARG-only base images with no default value
   - Compose services with a "build:" directive
   - Non-docker "uses:" in GitHub Actions (e.g., actions/checkout@v4)
@@ -300,7 +303,12 @@ func applyDockerfile(pf parsedFile, digestMap map[string]string, dryRun bool, up
 	if len(digests) == 0 {
 		return
 	}
-	result := dockerfile.RewriteFile(string(pf.content), pf.dockerInsts, digests)
+	result, unrewritten := dockerfile.RewriteFileReport(string(pf.content), pf.dockerInsts, digests)
+	for _, i := range unrewritten {
+		inst := pf.dockerInsts[i]
+		fmt.Fprintf(os.Stderr, "WARN  %s:%d  %s  reference not found in the source line, left unchanged\n",
+			pf.path, inst.StartLine, inst.ImageRef)
+	}
 	if dryRun {
 		fmt.Printf("--- %s\n", pf.path)
 		fmt.Print(result)
@@ -310,7 +318,7 @@ func applyDockerfile(pf parsedFile, digestMap map[string]string, dryRun bool, up
 		fmt.Fprintf(os.Stderr, "error writing %s: %v\n", pf.path, err)
 		return
 	}
-	fmt.Printf("pinned %d image(s) in %s\n", len(digests), pf.path)
+	fmt.Printf("pinned %d image(s) in %s\n", len(digests)-len(unrewritten), pf.path)
 }
 
 func applyActions(pf parsedFile, digestMap map[string]string, dryRun bool, update bool) {

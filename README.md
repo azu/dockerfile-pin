@@ -1,6 +1,6 @@
 # dockerfile-pin
 
-A CLI tool that adds `@sha256:<digest>` to `FROM` lines in Dockerfiles, `image` fields in docker-compose.yml, and Docker image references in GitHub Actions and GitLab CI files to prevent supply chain attacks.
+A CLI tool that adds `@sha256:<digest>` to `FROM` and `COPY --from=` lines in Dockerfiles, `image` fields in docker-compose.yml, and Docker image references in GitHub Actions and GitLab CI files to prevent supply chain attacks.
 
 ## Install
 
@@ -77,6 +77,8 @@ dockerfile-pin run --write --update --min-age 7
 FROM node:20.11.1
 FROM python:3.12-slim AS builder
 FROM scratch
+COPY --from=nginx:1.27 /etc/nginx /etc/nginx
+COPY --from=builder /app /app
 ```
 
 **After:**
@@ -85,6 +87,8 @@ FROM scratch
 FROM node:20.11.1@sha256:e06aae17c40c7a6b5296ca6f942a02e6737ae61bbbf3e2158624bb0f887991b5
 FROM python:3.12-slim@sha256:3d5ed973e45820f5ba5e46bd065bd88b3a504ff0724d85980dcd05eab361fcf4 AS builder
 FROM scratch
+COPY --from=nginx:1.27@sha256:6784fb08b4b7c3b6bcd3f4a1b4d1b1f3e3b7a7ca42ec3e0d9df8a97a2c9a3b1d /etc/nginx /etc/nginx
+COPY --from=builder /app /app
 ```
 
 #### docker-compose.yml
@@ -295,6 +299,34 @@ ignore-images:
 | `ARG BASE` + `FROM ${BASE}` (no default) | Skipped with warning |
 | `FROM ghcr.io/org/image:tag` | Yes |
 | `FROM registry:5000/image:tag` | Yes |
+| `COPY --from=image:tag` | Yes |
+| `COPY --from=image:tag@sha256:...` (already pinned) | Skipped (use `--update` to refresh) |
+| `COPY --from=<stage-name>` (multi-stage ref) | Skipped |
+| `COPY --from=0` (stage index) | Skipped |
+| `COPY --from=scratch` | Skipped |
+| `COPY --from=image:${TAG}` | Skipped (BuildKit does not expand variables here) |
+| `COPY /src /dst` (build context) | Nothing to pin |
+| `ONBUILD COPY --from=image:tag` | Yes |
+| `# escape=` directive | Honored |
+| `ADD --from=...`, `RUN --mount=...,from=...` | Not supported |
+
+An `ONBUILD COPY --from=name` is resolved as an image even when a stage in the same
+file shares that name. The trigger does not run in this build: it is recorded into the
+image config and executed later, inside whichever build uses this image as its base,
+against that Dockerfile's stages — the ones declared here are gone by then.
+
+A digest makes a name an image even when a build stage shares it: BuildKit matches the
+whole value against its stage names, so `COPY --from=nginx@sha256:...` finds no stage
+named `nginx` and is resolved from the registry. The same holds for `FROM`.
+
+A `COPY --from=<name>` that matches no build stage is treated as an image, the same
+way `FROM ubuntu` is. A [named build context](https://docs.docker.com/reference/cli/docker/buildx/build/#build-context)
+(`docker buildx build --build-context name=...`) is written the same way and cannot
+be told apart from the Dockerfile alone; use `--ignore-images` to exclude one.
+
+Variables are not expanded in `COPY --from=`: BuildKit reads the value verbatim and
+the build fails with `failed to parse stage name` ([moby/buildkit#2374](https://github.com/moby/buildkit/issues/2374)),
+so such a reference is reported as skipped rather than pinned. `FROM` does expand them.
 
 ### docker-compose.yml
 
