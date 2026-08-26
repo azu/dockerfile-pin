@@ -38,6 +38,9 @@ type FromInstruction struct {
 	Skip       bool
 	SkipReason string
 	IsCopyFrom bool // true for COPY --from=<ref>, false for FROM
+	// EscapeToken is the character that continues a line, from the "# escape="
+	// parser directive. Zero means the Dockerfile default, a backslash.
+	EscapeToken rune
 }
 
 // Parse reads a Dockerfile from r and returns every pinnable image reference:
@@ -79,14 +82,21 @@ func Parse(r io.Reader) ([]FromInstruction, error) {
 				instructions = append(instructions, inst)
 			}
 		case "onbuild":
-			// The wrapped instruction runs when a later build uses this image as its
-			// base, and a COPY --from inside one names a real image all the same.
+			// The wrapped instruction is only recorded into this image's config here;
+			// it runs later, inside whichever build uses this image as its base, and is
+			// resolved against *that* Dockerfile's stages. The names declared in this
+			// file are gone by then, so none of them is passed: a bare name in an
+			// ONBUILD trigger is an image to resolve, not a stage to skip.
 			if child := onbuildChild(node); child != nil && strings.ToLower(child.Value) == "copy" {
-				if inst, ok := parseCopyFromNode(child, allStages); ok {
+				if inst, ok := parseCopyFromNode(child, nil); ok {
 					instructions = append(instructions, inst)
 				}
 			}
 		}
+	}
+
+	for i := range instructions {
+		instructions[i].EscapeToken = result.EscapeToken
 	}
 
 	return instructions, nil

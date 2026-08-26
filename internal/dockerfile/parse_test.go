@@ -411,11 +411,25 @@ func TestParse_CopyFrom(t *testing.T) {
 			},
 		},
 		{
-			name:  "ONBUILD wrapping a stage reference",
+			// The trigger runs inside whichever build uses this image as its base, and
+			// is resolved against that Dockerfile's stages. A stage declared here is
+			// gone by then, so the name is an image to resolve rather than a stage.
+			name:  "ONBUILD does not see the stages of the file it is written in",
 			input: "FROM golang:1.22 AS builder\nONBUILD COPY --from=builder /app /app\n",
 			want: []wantInst{
 				{imageRef: "golang:1.22", startLine: 1},
-				{imageRef: "builder", isCopyFrom: true, skip: true, skipReason: SkipStageRef, startLine: 2},
+				{imageRef: "builder", isCopyFrom: true, startLine: 2},
+			},
+		},
+		{
+			// A stage index and scratch do not depend on any stage name, so they are
+			// still not images to resolve.
+			name:  "ONBUILD wrapping a stage index or scratch",
+			input: "FROM alpine:3.19 AS base\nONBUILD COPY --from=0 /a /b\nONBUILD COPY --from=scratch /a /b\n",
+			want: []wantInst{
+				{imageRef: "alpine:3.19", startLine: 1},
+				{imageRef: "0", isCopyFrom: true, skip: true, skipReason: SkipStageIndex, startLine: 2},
+				{imageRef: "scratch", isCopyFrom: true, skip: true, skipReason: SkipScratch, startLine: 3},
 			},
 		},
 		{

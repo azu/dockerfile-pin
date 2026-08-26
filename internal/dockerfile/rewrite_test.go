@@ -401,3 +401,80 @@ func TestRewriteFileReport_UnrewrittenReported(t *testing.T) {
 		t.Errorf("unrewritten = %v, want [1]", unrewritten)
 	}
 }
+
+// TestRewriteFile_EscapeDirective covers a Dockerfile that changes its continuation
+// character with "# escape=`". Stripping a hard-coded backslash would leave the
+// backtick in the rebuilt instruction, and the reference would never be found.
+func TestRewriteFile_EscapeDirective(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		digest  string
+		want    string
+	}{
+		{
+			name:    "COPY --from split on a backtick",
+			content: "# escape=`\nCOPY --from=nginx:`\n1.27 /src /dst\n",
+			digest:  "sha256:nginx111",
+			want:    "# escape=`\nCOPY --from=nginx:`\n1.27@sha256:nginx111 /src /dst\n",
+		},
+		{
+			name:    "FROM split on a backtick",
+			content: "# escape=`\nFROM ubu`\nntu:24.04\n",
+			digest:  "sha256:ubuntu111",
+			want:    "# escape=`\nFROM ubu`\nntu:24.04@sha256:ubuntu111\n",
+		},
+		{
+			// With a backtick escape a backslash is an ordinary character, so a
+			// Windows-style path must survive untouched.
+			name:    "backslashes in a path are not continuations",
+			content: "# escape=`\nCOPY --from=nginx:1.27 `\n   C:\\nginx\\conf C:\\dst\n",
+			digest:  "sha256:nginx222",
+			want:    "# escape=`\nCOPY --from=nginx:1.27@sha256:nginx222 `\n   C:\\nginx\\conf C:\\dst\n",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			instructions, err := Parse(strings.NewReader(tt.content))
+			if err != nil {
+				t.Fatalf("Parse() error = %v", err)
+			}
+			if len(instructions) != 1 {
+				t.Fatalf("expected 1 instruction, got %d", len(instructions))
+			}
+			got, unrewritten := RewriteFileReport(tt.content, instructions, map[int]string{0: tt.digest})
+			if len(unrewritten) != 0 {
+				t.Errorf("instruction reported as unrewritten: %v", unrewritten)
+			}
+			if got != tt.want {
+				t.Errorf("RewriteFile() =\n%q\nwant:\n%q", got, tt.want)
+			}
+			after, err := Parse(strings.NewReader(got))
+			if err != nil {
+				t.Fatalf("rewritten file no longer parses: %v", err)
+			}
+			if len(after) != 1 || after[0].Digest != tt.digest {
+				t.Errorf("after rewrite: %+v, want digest %q", after, tt.digest)
+			}
+		})
+	}
+}
+
+// TestRewriteFile_OnbuildPinsNameMatchingLocalStage is the rewrite side of ONBUILD
+// scoping: the name matches a stage in this file, but the trigger runs elsewhere, so
+// it is pinned as an image.
+func TestRewriteFile_OnbuildPinsNameMatchingLocalStage(t *testing.T) {
+	content := "FROM alpine:3.19 AS nginx\nONBUILD COPY --from=nginx /a /b\n"
+	instructions, err := Parse(strings.NewReader(content))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if len(instructions) != 2 || instructions[1].Skip {
+		t.Fatalf("expected the ONBUILD ref to be pinnable, got %+v", instructions)
+	}
+	digests := map[int]string{0: "sha256:alpine111", 1: "sha256:nginx222"}
+	want := "FROM alpine:3.19@sha256:alpine111 AS nginx\nONBUILD COPY --from=nginx@sha256:nginx222 /a /b\n"
+	if got := RewriteFile(content, instructions, digests); got != want {
+		t.Errorf("RewriteFile() =\n%s\nwant:\n%s", got, want)
+	}
+}

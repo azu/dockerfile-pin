@@ -307,7 +307,13 @@ ignore-images:
 | `COPY --from=image:${TAG}` | Skipped (BuildKit does not expand variables here) |
 | `COPY /src /dst` (build context) | Nothing to pin |
 | `ONBUILD COPY --from=image:tag` | Yes |
+| `# escape=` directive | Honored |
 | `ADD --from=...`, `RUN --mount=...,from=...` | Not supported |
+
+An `ONBUILD COPY --from=name` is resolved as an image even when a stage in the same
+file shares that name. The trigger does not run in this build: it is recorded into the
+image config and executed later, inside whichever build uses this image as its base,
+against that Dockerfile's stages — the ones declared here are gone by then.
 
 A digest makes a name an image even when a build stage shares it: BuildKit matches the
 whole value against its stage names, so `COPY --from=nginx@sha256:...` finds no stage

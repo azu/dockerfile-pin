@@ -19,7 +19,7 @@ func AddCopyFromDigest(original string, rawRef string, digest string) string {
 // the reference is not found there.
 func addDigestAfter(line string, prefix string, rawRef string, digest string) string {
 	lines := []string{line}
-	if !rewriteSpan(lines, 0, 0, prefix, rawRef, digest) {
+	if !rewriteSpan(lines, 0, 0, prefix, rawRef, digest, defaultEscape) {
 		return line
 	}
 	return lines[0]
@@ -55,7 +55,7 @@ func RewriteFileReport(content string, instructions []FromInstruction, digests m
 		if last >= len(lines) {
 			last = len(lines) - 1
 		}
-		if !rewriteSpan(lines, first, last, prefix, inst.RawRef, digest) {
+		if !rewriteSpan(lines, first, last, prefix, inst.RawRef, digest, escapeByte(inst.EscapeToken)) {
 			unrewritten = append(unrewritten, i)
 		}
 	}
@@ -69,11 +69,11 @@ func RewriteFileReport(content string, instructions []FromInstruction, digests m
 // reference broken up by a "\" continuation is still found, and the digest still lands
 // in the right place. Rewriting each physical line on its own would miss those and
 // leave the file silently unchanged.
-func rewriteSpan(lines []string, first, last int, prefix, rawRef, digest string) bool {
+func rewriteSpan(lines []string, first, last int, prefix, rawRef, digest string, escape byte) bool {
 	if rawRef == "" {
 		return false
 	}
-	logical, origin := joinContinued(lines, first, last)
+	logical, origin := joinContinued(lines, first, last, escape)
 	idx := strings.Index(logical, prefix+rawRef)
 	if idx < 0 {
 		return false
@@ -132,17 +132,31 @@ type bytePos struct {
 	col  int // byte offset within that line
 }
 
+// defaultEscape is the character that continues a line when the Dockerfile carries no
+// "# escape=" directive.
+const defaultEscape = '\\'
+
+// escapeByte returns the continuation character to strip for an instruction. A zero
+// token means none was recorded, so the Dockerfile default applies. The escape
+// directive accepts only "\" or "`", both ASCII, so a byte is enough.
+func escapeByte(token rune) byte {
+	if token == 0 {
+		return defaultEscape
+	}
+	return byte(token)
+}
+
 // joinContinued rebuilds the text of an instruction from the lines it spans, the way
-// the parser does: a line continued with "\" contributes everything before the
-// backslash and the next line follows it directly. The second result maps each byte of
-// the joined text back to the line and column it came from.
-func joinContinued(lines []string, first, last int) (string, []bytePos) {
+// the parser does: a continued line contributes everything before the escape character
+// and the next line follows it directly. The second result maps each byte of the
+// joined text back to the line and column it came from.
+func joinContinued(lines []string, first, last int, escape byte) (string, []bytePos) {
 	var sb strings.Builder
 	origin := make([]bytePos, 0, 128)
 	for i := first; i <= last; i++ {
 		text := lines[i]
 		if i < last {
-			if idx := strings.LastIndexByte(text, '\\'); idx >= 0 && strings.TrimSpace(text[idx+1:]) == "" {
+			if idx := strings.LastIndexByte(text, escape); idx >= 0 && strings.TrimSpace(text[idx+1:]) == "" {
 				text = text[:idx]
 			}
 		}
