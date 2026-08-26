@@ -510,3 +510,135 @@ func TestResolveParallel_MinAge_CreatedTimeErrorPinsAnyway(t *testing.T) {
 		t.Errorf("expected node:20 to be pinned despite age-check failure, got %q", results["node:20"])
 	}
 }
+
+const copyFromDockerfile = `FROM golang:1.22 AS builder
+COPY --from=builder /app /app
+COPY --from=0 /go/bin/tool /usr/local/bin/tool
+COPY --from=nginx:1.27 /etc/nginx /etc/nginx
+COPY --chown=65532:65532 --from=ghcr.io/myorg/tool:v1 /tool /tool
+COPY ./config /config
+`
+
+// TestParseFile_DockerfileCollectsCopyFromRefs checks which references `run` sends to
+// the registry: external images from COPY --from, but never a stage name or index.
+func TestParseFile_DockerfileCollectsCopyFromRefs(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "Dockerfile")
+	if err := os.WriteFile(path, []byte(copyFromDockerfile), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	pf, err := parseFile(path, false, nil)
+	if err != nil {
+		t.Fatalf("parseFile() error = %v", err)
+	}
+
+	want := []string{"golang:1.22", "nginx:1.27", "ghcr.io/myorg/tool:v1"}
+	if len(pf.imageRefs) != len(want) {
+		t.Fatalf("imageRefs = %v, want %v", pf.imageRefs, want)
+	}
+	for i, w := range want {
+		if pf.imageRefs[i] != w {
+			t.Errorf("imageRefs[%d] = %q, want %q", i, pf.imageRefs[i], w)
+		}
+	}
+}
+
+// TestParseFile_DockerfileIgnoresCopyFromImages checks that --ignore-images applies to
+// COPY --from as well, which is how a named build context is excluded.
+func TestParseFile_DockerfileIgnoresCopyFromImages(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "Dockerfile")
+	if err := os.WriteFile(path, []byte(copyFromDockerfile), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	pf, err := parseFile(path, false, []string{"ghcr.io/myorg/*"})
+	if err != nil {
+		t.Fatalf("parseFile() error = %v", err)
+	}
+
+	for _, ref := range pf.imageRefs {
+		if ref == "ghcr.io/myorg/tool:v1" {
+			t.Errorf("ignored image %q should not be resolved: %v", ref, pf.imageRefs)
+		}
+	}
+	if len(pf.imageRefs) != 2 {
+		t.Errorf("imageRefs = %v, want golang:1.22 and nginx:1.27", pf.imageRefs)
+	}
+}
+
+// TestApplyDockerfile_PinsCopyFrom writes a pinned Dockerfile the way `run --write`
+// does and checks the file on disk.
+func TestApplyDockerfile_PinsCopyFrom(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "Dockerfile")
+	if err := os.WriteFile(path, []byte(copyFromDockerfile), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	instructions, err := dockerfile.Parse(strings.NewReader(copyFromDockerfile))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	pf := parsedFile{
+		path:        path,
+		fileType:    FileTypeDockerfile,
+		dockerInsts: instructions,
+		content:     []byte(copyFromDockerfile),
+	}
+	digestMap := map[string]string{
+		"golang:1.22":           "sha256:golang111",
+		"nginx:1.27":            "sha256:nginx222",
+		"ghcr.io/myorg/tool:v1": "sha256:tool333",
+	}
+
+	applyDockerfile(pf, digestMap, false, false)
+
+	result, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(result)
+	want := `FROM golang:1.22@sha256:golang111 AS builder
+COPY --from=builder /app /app
+COPY --from=0 /go/bin/tool /usr/local/bin/tool
+COPY --from=nginx:1.27@sha256:nginx222 /etc/nginx /etc/nginx
+COPY --chown=65532:65532 --from=ghcr.io/myorg/tool:v1@sha256:tool333 /tool /tool
+COPY ./config /config
+`
+	if got != want {
+		t.Errorf("applyDockerfile() wrote:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+// TestApplyDockerfile_UpdateCopyFromDigest covers `run --write --update` re-resolving
+// a COPY --from that is already pinned.
+func TestApplyDockerfile_UpdateCopyFromDigest(t *testing.T) {
+	content := "FROM ubuntu:24.04@sha256:oldubuntu\nCOPY --from=nginx:1.27@sha256:oldnginx /etc/nginx /etc/nginx\n"
+	dir := t.TempDir()
+	path := filepath.Join(dir, "Dockerfile")
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	instructions, err := dockerfile.Parse(strings.NewReader(content))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	pf := parsedFile{path: path, fileType: FileTypeDockerfile, dockerInsts: instructions, content: []byte(content)}
+
+	applyDockerfile(pf, map[string]string{
+		"ubuntu:24.04": "sha256:newubuntu",
+		"nginx:1.27":   "sha256:newnginx",
+	}, false, true)
+
+	result, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "FROM ubuntu:24.04@sha256:newubuntu\nCOPY --from=nginx:1.27@sha256:newnginx /etc/nginx /etc/nginx\n"
+	if string(result) != want {
+		t.Errorf("applyDockerfile() wrote:\n%s\nwant:\n%s", string(result), want)
+	}
+}

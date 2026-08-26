@@ -20,14 +20,14 @@ import (
 
 var checkCmd = &cobra.Command{
 	Use:   "check",
-	Short: "Check if FROM images are pinned to digests",
+	Short: "Check if FROM and COPY --from images are pinned to digests",
 	Long: `Validate that every Docker image reference has a @sha256:<digest> and that the
 digest exists in the registry.
 
 Each image is reported as one of:
   OK     digest present and verified in registry
   FAIL   missing digest, or digest not found in registry
-  SKIP   scratch, multi-stage ref, ignored, non-Docker uses, or CI variable
+  SKIP   scratch, multi-stage ref, stage index, ignored, non-Docker uses, or CI variable
   WARN   registry check failed (network error, auth issue, etc.)
 
 Exit code is 1 (configurable with --exit-code) when any image has FAIL status.

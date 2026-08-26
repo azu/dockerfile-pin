@@ -19,7 +19,7 @@ import (
 
 var runCmd = &cobra.Command{
 	Use:   "run",
-	Short: "Pin FROM images to their digests",
+	Short: "Pin FROM and COPY --from images to their digests",
 	Long: `Resolve image tags to sha256 digests and add @sha256:<digest> to each reference.
 By default, prints the rewritten file to stdout without modifying it (dry-run).
 Use --write to apply changes in place.
@@ -27,9 +27,12 @@ Use --write to apply changes in place.
 Supports Dockerfiles, docker-compose.yml/compose.yaml, GitHub Actions workflows,
 action.yml files, and .gitlab-ci.yml. File type is detected from filename.
 
+Both "FROM image:tag" and "COPY --from=image:tag" are pinned.
+
 Skipped automatically:
   - "FROM scratch" (no registry image)
-  - Multi-stage references ("FROM builder")
+  - Multi-stage references ("FROM builder", "COPY --from=builder", "COPY --from=0")
+  - Variables in "COPY --from" (BuildKit does not expand them)
   - ARG-only base images with no default value
   - Compose services with a "build:" directive
   - Non-docker "uses:" in GitHub Actions (e.g., actions/checkout@v4)

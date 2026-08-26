@@ -802,3 +802,201 @@ func TestConfigFileEndToEnd(t *testing.T) {
 		t.Error("node:20 should not be ignored")
 	}
 }
+
+// pinAll runs the whole pin pipeline over content: parse, resolve every reference
+// that is neither skipped nor already pinned, then rewrite. Resolving is strict, so a
+// reference that should have been skipped — a stage name, a stage index — fails the
+// test instead of silently reaching the registry.
+func pinAll(t *testing.T, content string, mock *resolver.MockResolver, update bool) string {
+	t.Helper()
+	instructions, err := dockerfile.Parse(strings.NewReader(content))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	ctx := context.Background()
+	digests := make(map[int]string)
+	for i, inst := range instructions {
+		if inst.Skip || (inst.Digest != "" && !update) {
+			continue
+		}
+		digest, err := mock.Resolve(ctx, inst.ImageRef)
+		if err != nil {
+			t.Fatalf("[%d] unexpected resolve of %q: %v", i, inst.ImageRef, err)
+		}
+		digests[i] = digest
+	}
+	return dockerfile.RewriteFile(content, instructions, digests)
+}
+
+// TestPinCopyFromEndToEnd pins the Dockerfile from the feature request and compares
+// the whole file, including the stage index that must be left as it is.
+func TestPinCopyFromEndToEnd(t *testing.T) {
+	input := "# Dockerfile\nFROM ubuntu:24.04\nCOPY --from=nginx:1.27 /etc/nginx /etc/nginx\nCOPY --from=0 /a /b\n"
+	mock := &resolver.MockResolver{
+		Digests: map[string]string{
+			"ubuntu:24.04": "sha256:ubuntu111",
+			"nginx:1.27":   "sha256:nginx222",
+		},
+	}
+
+	want := "# Dockerfile\n" +
+		"FROM ubuntu:24.04@sha256:ubuntu111\n" +
+		"COPY --from=nginx:1.27@sha256:nginx222 /etc/nginx /etc/nginx\n" +
+		"COPY --from=0 /a /b\n"
+	if got := pinAll(t, input, mock, false); got != want {
+		t.Errorf("pin =\n%s\nwant:\n%s", got, want)
+	}
+}
+
+// TestPinCopyFromUpdateEndToEnd re-resolves digests that are already written, the
+// path taken by `run --update`.
+func TestPinCopyFromUpdateEndToEnd(t *testing.T) {
+	input := "FROM ubuntu:24.04@sha256:oldubuntu\nCOPY --from=nginx:1.27@sha256:oldnginx /etc/nginx /etc/nginx\n"
+	mock := &resolver.MockResolver{
+		Digests: map[string]string{
+			"ubuntu:24.04": "sha256:newubuntu",
+			"nginx:1.27":   "sha256:newnginx",
+		},
+	}
+
+	want := "FROM ubuntu:24.04@sha256:newubuntu\nCOPY --from=nginx:1.27@sha256:newnginx /etc/nginx /etc/nginx\n"
+	if got := pinAll(t, input, mock, true); got != want {
+		t.Errorf("pin --update =\n%s\nwant:\n%s", got, want)
+	}
+}
+
+// TestCheckCopyFromEndToEnd walks the statuses `check` reports for each form of
+// COPY --from.
+func TestCheckCopyFromEndToEnd(t *testing.T) {
+	input := "FROM golang:1.22 AS builder\n" +
+		"COPY --from=builder /app /app\n" +
+		"COPY --from=0 /go/bin/tool /usr/local/bin/tool\n" +
+		"COPY --from=nginx:1.27 /etc/nginx /etc/nginx\n" +
+		"COPY --from=busybox:1.36@sha256:validdigest /bin/busybox /bin/busybox\n" +
+		"COPY --from=alpine:3.19@sha256:missingdigest /etc/alpine-release /etc/alpine-release\n" +
+		"COPY --from=scratch /a /b\n" +
+		"COPY ./config /config\n"
+
+	mock := &resolver.MockResolver{
+		Digests: map[string]string{
+			"busybox:1.36@sha256:validdigest": "sha256:validdigest",
+			"golang:1.22@sha256:golangdigest": "sha256:golangdigest",
+		},
+	}
+
+	instructions, err := dockerfile.Parse(strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+
+	ctx := context.Background()
+	type checkResult struct {
+		imageRef string
+		status   string
+	}
+	var results []checkResult
+	for _, inst := range instructions {
+		switch {
+		case inst.Skip:
+			results = append(results, checkResult{inst.ImageRef, "skip:" + inst.SkipReason})
+		case inst.Digest == "":
+			results = append(results, checkResult{inst.ImageRef, "fail-missing"})
+		default:
+			exists, _ := mock.Exists(ctx, inst.ImageRef+"@"+inst.Digest)
+			if exists {
+				results = append(results, checkResult{inst.ImageRef, "ok"})
+			} else {
+				results = append(results, checkResult{inst.ImageRef, "fail-notfound"})
+			}
+		}
+	}
+
+	expected := []checkResult{
+		{"golang:1.22", "fail-missing"},
+		{"builder", "skip:" + dockerfile.SkipStageRef},
+		{"0", "skip:" + dockerfile.SkipStageIndex},
+		{"nginx:1.27", "fail-missing"},
+		{"busybox:1.36", "ok"},
+		{"alpine:3.19", "fail-notfound"},
+		{"scratch", "skip:" + dockerfile.SkipScratch},
+	}
+	if len(results) != len(expected) {
+		t.Fatalf("got %d results, want %d: %+v", len(results), len(expected), results)
+	}
+	for i, want := range expected {
+		if results[i] != want {
+			t.Errorf("[%d] got %+v, want %+v", i, results[i], want)
+		}
+	}
+}
+
+// TestPinCopyFromTestdataRoundTrip pins testdata/copy_from.Dockerfile, writes it out
+// and reads it back the way `run --write` does, then checks that a second pass has
+// nothing left to change.
+func TestPinCopyFromTestdataRoundTrip(t *testing.T) {
+	content, err := os.ReadFile(filepath.Join("testdata", "copy_from.Dockerfile"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	mock := &resolver.MockResolver{
+		Digests: map[string]string{
+			"golang:1.22": "sha256:golang111",
+			"gcr.io/distroless/base-debian12:nonroot": "sha256:distroless222",
+			"nginx:1.27":                         "sha256:nginx333",
+			"busybox:1.36":                       "sha256:busybox444",
+			"registry.example.com:5000/tool:1.0": "sha256:tool555",
+		},
+	}
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "Dockerfile")
+	if err := os.WriteFile(path, []byte(pinAll(t, string(content), mock, false)), 0644); err != nil {
+		t.Fatal(err)
+	}
+	written, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(written)
+
+	// Every reference that can be pinned now carries a digest, which is what
+	// `check --syntax-only` asks of the file.
+	instructions, err := dockerfile.Parse(strings.NewReader(got))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	for i, inst := range instructions {
+		if !inst.Skip && inst.Digest == "" {
+			t.Errorf("[%d] %q left unpinned", i, inst.ImageRef)
+		}
+	}
+
+	for _, want := range []string{
+		"FROM golang:1.22@sha256:golang111 AS builder",
+		"FROM gcr.io/distroless/base-debian12:nonroot@sha256:distroless222",
+		"COPY --from=nginx:1.27@sha256:nginx333 /etc/nginx /etc/nginx",
+		"COPY --chown=65532:65532 --from=busybox:1.36@sha256:busybox444 /bin/busybox /bin/busybox",
+		"COPY --from=registry.example.com:5000/tool:1.0@sha256:tool555 /tool /usr/local/bin/tool2",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("expected pinned line %q\nin:\n%s", want, got)
+		}
+	}
+
+	for _, want := range []string{
+		"RUN go build -o /app",
+		"COPY --from=builder /app /app",
+		"COPY --from=0 /go/bin/tool /usr/local/bin/tool",
+		"COPY --from=alpine:3.19@sha256:aaaa1111 /etc/alpine-release /etc/alpine-release",
+		"COPY --from=nginx:${NGINX_VERSION} /etc/nginx /etc/nginx.orig",
+		"COPY ./config /config",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("expected untouched line %q\nin:\n%s", want, got)
+		}
+	}
+
+	if again := pinAll(t, got, mock, false); again != got {
+		t.Errorf("pinning an already-pinned file changed it:\n%s", again)
+	}
+}
