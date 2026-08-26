@@ -134,6 +134,7 @@ type bytePos struct {
 
 // defaultEscape is the character that continues a line when the Dockerfile carries no
 // "# escape=" directive.
+// https://docs.docker.com/reference/dockerfile/#escape
 const defaultEscape = '\\'
 
 // escapeByte returns the continuation character to strip for an instruction. A zero

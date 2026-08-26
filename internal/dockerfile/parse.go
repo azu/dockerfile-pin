@@ -40,6 +40,7 @@ type FromInstruction struct {
 	IsCopyFrom bool // true for COPY --from=<ref>, false for FROM
 	// EscapeToken is the character that continues a line, from the "# escape="
 	// parser directive. Zero means the Dockerfile default, a backslash.
+	// https://docs.docker.com/reference/dockerfile/#escape
 	EscapeToken rune
 }
 
