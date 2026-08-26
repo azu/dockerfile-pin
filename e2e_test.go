@@ -945,6 +945,7 @@ func TestPinCopyFromTestdataRoundTrip(t *testing.T) {
 			"nginx:1.27":                         "sha256:nginx333",
 			"busybox:1.36":                       "sha256:busybox444",
 			"registry.example.com:5000/tool:1.0": "sha256:tool555",
+			"curlimages/curl:8.11.1":             "sha256:curl666",
 		},
 	}
 
@@ -977,6 +978,7 @@ func TestPinCopyFromTestdataRoundTrip(t *testing.T) {
 		"COPY --from=nginx:1.27@sha256:nginx333 /etc/nginx /etc/nginx",
 		"COPY --chown=65532:65532 --from=busybox:1.36@sha256:busybox444 /bin/busybox /bin/busybox",
 		"COPY --from=registry.example.com:5000/tool:1.0@sha256:tool555 /tool /usr/local/bin/tool2",
+		"ONBUILD COPY --from=curlimages/curl:8.11.1@sha256:curl666 /usr/bin/curl /usr/bin/curl",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("expected pinned line %q\nin:\n%s", want, got)

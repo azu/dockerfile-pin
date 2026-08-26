@@ -306,7 +306,12 @@ ignore-images:
 | `COPY --from=scratch` | Skipped |
 | `COPY --from=image:${TAG}` | Skipped (BuildKit does not expand variables here) |
 | `COPY /src /dst` (build context) | Nothing to pin |
+| `ONBUILD COPY --from=image:tag` | Yes |
 | `ADD --from=...`, `RUN --mount=...,from=...` | Not supported |
+
+A digest makes a name an image even when a build stage shares it: BuildKit matches the
+whole value against its stage names, so `COPY --from=nginx@sha256:...` finds no stage
+named `nginx` and is resolved from the registry. The same holds for `FROM`.
 
 A `COPY --from=<name>` that matches no build stage is treated as an image, the same
 way `FROM ubuntu` is. A [named build context](https://docs.docker.com/reference/cli/docker/buildx/build/#build-context)

@@ -20,5 +20,8 @@ COPY --from=alpine:3.19@sha256:aaaa1111 /etc/alpine-release /etc/alpine-release
 ARG NGINX_VERSION=1.27
 COPY --from=nginx:${NGINX_VERSION} /etc/nginx /etc/nginx.orig
 
+# an ONBUILD trigger still names a real image
+ONBUILD COPY --from=curlimages/curl:8.11.1 /usr/bin/curl /usr/bin/curl
+
 # from the build context
 COPY ./config /config

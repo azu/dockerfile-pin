@@ -78,10 +78,32 @@ func Parse(r io.Reader) ([]FromInstruction, error) {
 			if inst, ok := parseCopyFromNode(node, allStages); ok {
 				instructions = append(instructions, inst)
 			}
+		case "onbuild":
+			// The wrapped instruction runs when a later build uses this image as its
+			// base, and a COPY --from inside one names a real image all the same.
+			if child := onbuildChild(node); child != nil && strings.ToLower(child.Value) == "copy" {
+				if inst, ok := parseCopyFromNode(child, allStages); ok {
+					instructions = append(instructions, inst)
+				}
+			}
 		}
 	}
 
 	return instructions, nil
+}
+
+// onbuildChild returns the instruction an ONBUILD wraps, or nil if it wraps nothing.
+// The parser hangs that instruction off an unnamed node and leaves its position unset,
+// so the ONBUILD node supplies the line span and source text the rewriter needs.
+func onbuildChild(node *parser.Node) *parser.Node {
+	if node.Next == nil || len(node.Next.Children) != 1 {
+		return nil
+	}
+	child := *node.Next.Children[0]
+	child.StartLine = node.StartLine
+	child.EndLine = node.EndLine
+	child.Original = node.Original
+	return &child
 }
 
 // collectStageNames returns every name introduced by a "FROM ... AS <name>" clause,
@@ -234,12 +256,9 @@ func classifyRef(ref string, stageNames map[string]bool) (imageRef, digest, skip
 		return ref, "", SkipScratch, true
 	}
 
-	// Strip any digest before comparing against stage names, which never carry one.
-	refWithoutDigest := ref
-	if atIdx := strings.LastIndex(ref, "@"); atIdx >= 0 {
-		refWithoutDigest = ref[:atIdx]
-	}
-	if stageNames[strings.ToLower(refWithoutDigest)] {
+	// BuildKit matches the whole value against its stage names, digest included, so
+	// "builder@sha256:..." finds no stage named "builder" and is an image reference.
+	if stageNames[strings.ToLower(ref)] {
 		return ref, "", SkipStageRef, true
 	}
 

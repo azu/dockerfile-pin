@@ -284,3 +284,120 @@ func TestRewriteFile_CopyFromAnchoredToFlag(t *testing.T) {
 		t.Errorf("RewriteFile() =\n%s\nwant:\n%s", got, want)
 	}
 }
+
+// TestRewriteFile_ReferenceSplitAcrossLines covers a reference broken up by a "\"
+// continuation, where no single line holds the text the parser reports. Searching each
+// line on its own would find nothing and leave the file unchanged while the caller
+// still counted the image as pinned.
+func TestRewriteFile_ReferenceSplitAcrossLines(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		digest  string
+		want    string
+	}{
+		{
+			name:    "value continues on the next line",
+			content: "COPY --from=\\\nnginx:1.27 /src /dst\n",
+			digest:  "sha256:nginx111",
+			want:    "COPY --from=\\\nnginx:1.27@sha256:nginx111 /src /dst\n",
+		},
+		{
+			name:    "the flag name itself is split",
+			content: "COPY --fr\\\nom=nginx:1.27 /src /dst\n",
+			digest:  "sha256:nginx111",
+			want:    "COPY --fr\\\nom=nginx:1.27@sha256:nginx111 /src /dst\n",
+		},
+		{
+			name:    "FROM split mid-reference",
+			content: "FROM ubu\\\nntu:24.04\n",
+			digest:  "sha256:ubuntu111",
+			want:    "FROM ubu\\\nntu:24.04@sha256:ubuntu111\n",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			instructions, err := Parse(strings.NewReader(tt.content))
+			if err != nil {
+				t.Fatalf("Parse() error = %v", err)
+			}
+			if len(instructions) != 1 {
+				t.Fatalf("expected 1 instruction, got %d", len(instructions))
+			}
+			got, unrewritten := RewriteFileReport(tt.content, instructions, map[int]string{0: tt.digest})
+			if len(unrewritten) != 0 {
+				t.Errorf("instruction reported as unrewritten: %v", unrewritten)
+			}
+			if got != tt.want {
+				t.Errorf("RewriteFile() =\n%q\nwant:\n%q", got, tt.want)
+			}
+			// The result must still parse, and now carry the digest.
+			after, err := Parse(strings.NewReader(got))
+			if err != nil {
+				t.Fatalf("rewritten file no longer parses: %v", err)
+			}
+			if len(after) != 1 || after[0].Digest != tt.digest {
+				t.Errorf("after rewrite: %+v, want digest %q", after, tt.digest)
+			}
+		})
+	}
+}
+
+// TestRewriteFile_SplitExistingDigestReplaced covers --update where the digest being
+// replaced is itself broken across the continuation.
+func TestRewriteFile_SplitExistingDigestReplaced(t *testing.T) {
+	content := "COPY --from=nginx:1.27@sha256:\\\nolddigest /src /dst\n"
+	instructions, err := Parse(strings.NewReader(content))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	got := RewriteFile(content, instructions, map[int]string{0: "sha256:newdigest"})
+	after, err := Parse(strings.NewReader(got))
+	if err != nil {
+		t.Fatalf("rewritten file no longer parses: %v", err)
+	}
+	if len(after) != 1 {
+		t.Fatalf("expected 1 instruction after rewrite, got %d", len(after))
+	}
+	if after[0].ImageRef != "nginx:1.27" || after[0].Digest != "sha256:newdigest" {
+		t.Errorf("after rewrite ref=%q digest=%q, want nginx:1.27 / sha256:newdigest",
+			after[0].ImageRef, after[0].Digest)
+	}
+	if strings.Contains(got, "olddigest") {
+		t.Errorf("old digest still present:\n%q", got)
+	}
+}
+
+// TestRewriteFile_OnbuildCopyFrom pins the image an ONBUILD COPY --from names.
+func TestRewriteFile_OnbuildCopyFrom(t *testing.T) {
+	content := "FROM alpine:3.19\nONBUILD COPY --from=nginx:1.27 /a /b\n"
+	instructions, err := Parse(strings.NewReader(content))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	digests := map[int]string{0: "sha256:alpine111", 1: "sha256:nginx222"}
+	want := "FROM alpine:3.19@sha256:alpine111\nONBUILD COPY --from=nginx:1.27@sha256:nginx222 /a /b\n"
+	if got := RewriteFile(content, instructions, digests); got != want {
+		t.Errorf("RewriteFile() =\n%s\nwant:\n%s", got, want)
+	}
+}
+
+// TestRewriteFileReport_UnrewrittenReported checks that a reference the rewriter cannot
+// find is reported rather than silently counted as pinned.
+func TestRewriteFileReport_UnrewrittenReported(t *testing.T) {
+	content := "FROM alpine:3.19\nRUN echo hi\n"
+	instructions := []FromInstruction{
+		{ImageRef: "alpine:3.19", RawRef: "alpine:3.19", StartLine: 1},
+		{ImageRef: "nginx:1.27", RawRef: "nginx:1.27", StartLine: 2, IsCopyFrom: true},
+	}
+	got, unrewritten := RewriteFileReport(content, instructions, map[int]string{
+		0: "sha256:alpine111",
+		1: "sha256:nginx222",
+	})
+	if want := "FROM alpine:3.19@sha256:alpine111\nRUN echo hi\n"; got != want {
+		t.Errorf("RewriteFileReport() =\n%q\nwant:\n%q", got, want)
+	}
+	if len(unrewritten) != 1 || unrewritten[0] != 1 {
+		t.Errorf("unrewritten = %v, want [1]", unrewritten)
+	}
+}

@@ -14,29 +14,30 @@ func AddCopyFromDigest(original string, rawRef string, digest string) string {
 	return addDigestAfter(original, copyFromFlag, rawRef, digest)
 }
 
-// addDigestAfter rewrites the first occurrence of prefix+rawRef in line, replacing any
-// digest rawRef already carries. It returns line unchanged when the reference is not
-// found there, which is how RewriteFile detects that it must look on a continuation line.
+// addDigestAfter rewrites the first occurrence of prefix+rawRef in a single line,
+// replacing any digest rawRef already carries. The line is returned unchanged when
+// the reference is not found there.
 func addDigestAfter(line string, prefix string, rawRef string, digest string) string {
-	if rawRef == "" {
+	lines := []string{line}
+	if !rewriteSpan(lines, 0, 0, prefix, rawRef, digest) {
 		return line
 	}
-	idx := strings.Index(line, prefix+rawRef)
-	if idx < 0 {
-		return line
-	}
-	baseRef := rawRef
-	if atIdx := strings.Index(rawRef, "@"); atIdx >= 0 {
-		baseRef = rawRef[:atIdx]
-	}
-	end := idx + len(prefix) + len(rawRef)
-	return line[:idx] + prefix + baseRef + "@" + digest + line[end:]
+	return lines[0]
 }
 
 // RewriteFile applies digest pins to a Dockerfile's content.
 // digests maps instruction index to digest string.
 func RewriteFile(content string, instructions []FromInstruction, digests map[int]string) string {
+	result, _ := RewriteFileReport(content, instructions, digests)
+	return result
+}
+
+// RewriteFileReport is RewriteFile plus the indexes of the instructions it was handed
+// a digest for but could not rewrite. Reporting them keeps a caller from announcing an
+// image as pinned when the file was in fact left untouched.
+func RewriteFileReport(content string, instructions []FromInstruction, digests map[int]string) (string, []int) {
 	lines := strings.Split(content, "\n")
+	var unrewritten []int
 	for i, inst := range instructions {
 		digest, ok := digests[i]
 		if !ok || inst.Skip {
@@ -46,21 +47,111 @@ func RewriteFile(content string, instructions []FromInstruction, digests map[int
 		if inst.IsCopyFrom {
 			prefix = copyFromFlag
 		}
-		// An instruction continued with "\" spans several lines and the reference is
-		// not always written on the first one, so every line it covers is tried until
-		// one of them changes.
-		for lineIdx := inst.StartLine - 1; lineIdx <= lastLineIndex(inst) && lineIdx < len(lines); lineIdx++ {
-			if lineIdx < 0 {
-				continue
-			}
-			rewritten := addDigestAfter(lines[lineIdx], prefix, inst.RawRef, digest)
-			if rewritten != lines[lineIdx] {
-				lines[lineIdx] = rewritten
-				break
-			}
+		first, last := inst.StartLine-1, lastLineIndex(inst)
+		if first < 0 || first >= len(lines) {
+			unrewritten = append(unrewritten, i)
+			continue
+		}
+		if last >= len(lines) {
+			last = len(lines) - 1
+		}
+		if !rewriteSpan(lines, first, last, prefix, inst.RawRef, digest) {
+			unrewritten = append(unrewritten, i)
 		}
 	}
-	return strings.Join(lines, "\n")
+	return strings.Join(lines, "\n"), unrewritten
+}
+
+// rewriteSpan pins the reference inside the lines an instruction covers, editing lines
+// in place and reporting whether it found anything to change.
+//
+// The search runs over the instruction as the parser sees it — one logical line — so a
+// reference broken up by a "\" continuation is still found, and the digest still lands
+// in the right place. Rewriting each physical line on its own would miss those and
+// leave the file silently unchanged.
+func rewriteSpan(lines []string, first, last int, prefix, rawRef, digest string) bool {
+	if rawRef == "" {
+		return false
+	}
+	logical, origin := joinContinued(lines, first, last)
+	idx := strings.Index(logical, prefix+rawRef)
+	if idx < 0 {
+		return false
+	}
+
+	// Any digest the reference already carries is dropped, and the new one is written
+	// where it ended.
+	baseRef := rawRef
+	if atIdx := strings.Index(rawRef, "@"); atIdx >= 0 {
+		baseRef = rawRef[:atIdx]
+	}
+	cutFrom := idx + len(prefix) + len(baseRef)
+	cutTo := idx + len(prefix) + len(rawRef)
+
+	// Where the replaced range starts, and which columns of which lines it covers.
+	insertLine, insertCol := last, len(lines[last])
+	if cutFrom < len(origin) {
+		insertLine, insertCol = origin[cutFrom].line, origin[cutFrom].col
+	}
+	dropped := make(map[int][2]int, 2) // line -> [from, to) columns to remove
+	for k := cutFrom; k < cutTo; k++ {
+		p := origin[k]
+		if span, ok := dropped[p.line]; ok {
+			dropped[p.line] = [2]int{span[0], p.col + 1}
+		} else {
+			dropped[p.line] = [2]int{p.col, p.col + 1}
+		}
+	}
+
+	for i := first; i <= last; i++ {
+		span, hasDrop := dropped[i]
+		if !hasDrop && i != insertLine {
+			continue
+		}
+		var sb strings.Builder
+		for col := 0; col <= len(lines[i]); col++ {
+			if i == insertLine && col == insertCol {
+				sb.WriteString("@" + digest)
+			}
+			if col == len(lines[i]) {
+				break
+			}
+			if hasDrop && col >= span[0] && col < span[1] {
+				continue
+			}
+			sb.WriteByte(lines[i][col])
+		}
+		lines[i] = sb.String()
+	}
+	return true
+}
+
+// bytePos records where a byte of a joined instruction came from.
+type bytePos struct {
+	line int // index into the file's lines
+	col  int // byte offset within that line
+}
+
+// joinContinued rebuilds the text of an instruction from the lines it spans, the way
+// the parser does: a line continued with "\" contributes everything before the
+// backslash and the next line follows it directly. The second result maps each byte of
+// the joined text back to the line and column it came from.
+func joinContinued(lines []string, first, last int) (string, []bytePos) {
+	var sb strings.Builder
+	origin := make([]bytePos, 0, 128)
+	for i := first; i <= last; i++ {
+		text := lines[i]
+		if i < last {
+			if idx := strings.LastIndexByte(text, '\\'); idx >= 0 && strings.TrimSpace(text[idx+1:]) == "" {
+				text = text[:idx]
+			}
+		}
+		for col := 0; col < len(text); col++ {
+			sb.WriteByte(text[col])
+			origin = append(origin, bytePos{line: i, col: col})
+		}
+	}
+	return sb.String(), origin
 }
 
 // lastLineIndex returns the 0-based index of the last line an instruction covers.

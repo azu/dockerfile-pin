@@ -303,7 +303,12 @@ func applyDockerfile(pf parsedFile, digestMap map[string]string, dryRun bool, up
 	if len(digests) == 0 {
 		return
 	}
-	result := dockerfile.RewriteFile(string(pf.content), pf.dockerInsts, digests)
+	result, unrewritten := dockerfile.RewriteFileReport(string(pf.content), pf.dockerInsts, digests)
+	for _, i := range unrewritten {
+		inst := pf.dockerInsts[i]
+		fmt.Fprintf(os.Stderr, "WARN  %s:%d  %s  reference not found in the source line, left unchanged\n",
+			pf.path, inst.StartLine, inst.ImageRef)
+	}
 	if dryRun {
 		fmt.Printf("--- %s\n", pf.path)
 		fmt.Print(result)
@@ -313,7 +318,7 @@ func applyDockerfile(pf parsedFile, digestMap map[string]string, dryRun bool, up
 		fmt.Fprintf(os.Stderr, "error writing %s: %v\n", pf.path, err)
 		return
 	}
-	fmt.Printf("pinned %d image(s) in %s\n", len(digests), pf.path)
+	fmt.Printf("pinned %d image(s) in %s\n", len(digests)-len(unrewritten), pf.path)
 }
 
 func applyActions(pf parsedFile, digestMap map[string]string, dryRun bool, update bool) {

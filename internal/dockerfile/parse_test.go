@@ -401,6 +401,42 @@ func TestParse_CopyFrom(t *testing.T) {
 			},
 		},
 		{
+			// The parser hangs the wrapped instruction off the ONBUILD node instead of
+			// listing it at the top level, but the image it names is just as real.
+			name:  "ONBUILD wraps a COPY --from",
+			input: "FROM alpine:3.19\nONBUILD COPY --from=nginx:1.27 /a /b\n",
+			want: []wantInst{
+				{imageRef: "alpine:3.19", startLine: 1},
+				{imageRef: "nginx:1.27", isCopyFrom: true, startLine: 2},
+			},
+		},
+		{
+			name:  "ONBUILD wrapping a stage reference",
+			input: "FROM golang:1.22 AS builder\nONBUILD COPY --from=builder /app /app\n",
+			want: []wantInst{
+				{imageRef: "golang:1.22", startLine: 1},
+				{imageRef: "builder", isCopyFrom: true, skip: true, skipReason: SkipStageRef, startLine: 2},
+			},
+		},
+		{
+			name:  "ONBUILD wrapping anything else",
+			input: "FROM alpine:3.19\nONBUILD RUN echo hi\n",
+			want: []wantInst{
+				{imageRef: "alpine:3.19", startLine: 1},
+			},
+		},
+		{
+			// BuildKit matches the whole --from value against its stage names, so a name
+			// carrying a digest finds no stage and is resolved as an image instead.
+			name:  "a digest turns a stage name into an image reference",
+			input: "FROM nginx:1.27 AS nginx\nCOPY --from=nginx /etc/nginx /etc/nginx\nCOPY --from=nginx@sha256:abc123 /etc/nginx /etc/nginx\n",
+			want: []wantInst{
+				{imageRef: "nginx:1.27", startLine: 1},
+				{imageRef: "nginx", isCopyFrom: true, skip: true, skipReason: SkipStageRef, startLine: 2},
+				{imageRef: "nginx", rawRef: "nginx@sha256:abc123", digest: "sha256:abc123", isCopyFrom: true, startLine: 3},
+			},
+		},
+		{
 			name:  "leading zeros are still a stage index",
 			input: "COPY --from=007 /a /b\n",
 			want: []wantInst{
@@ -492,5 +528,36 @@ func TestIsStageIndex(t *testing.T) {
 		if got := isStageIndex(tt.in); got != tt.want {
 			t.Errorf("isStageIndex(%q) = %v, want %v", tt.in, got, tt.want)
 		}
+	}
+}
+
+// TestParse_FromStageNameWithDigest is the FROM side of the same rule: a stage name
+// carrying a digest is an image reference, because BuildKit looks the whole string up.
+func TestParse_FromStageNameWithDigest(t *testing.T) {
+	input := "FROM alpine:3.19 AS builder\nFROM builder\nFROM builder@sha256:abc123\n"
+	checkInstructions(t, input, []wantInst{
+		{imageRef: "alpine:3.19", startLine: 1},
+		{imageRef: "builder", skip: true, skipReason: SkipStageRef, startLine: 2},
+		{imageRef: "builder", rawRef: "builder@sha256:abc123", digest: "sha256:abc123", startLine: 3},
+	})
+}
+
+// TestParse_OnbuildLineSpan checks that the wrapped instruction reports the ONBUILD's
+// own position, which the parser leaves unset on the child node.
+func TestParse_OnbuildLineSpan(t *testing.T) {
+	input := "FROM alpine:3.19\nONBUILD COPY \\\n  --from=nginx:1.27 \\\n  /a /b\n"
+	instructions, err := Parse(strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if len(instructions) != 2 {
+		t.Fatalf("expected 2 instructions, got %d", len(instructions))
+	}
+	inst := instructions[1]
+	if inst.StartLine != 2 || inst.EndLine != 4 {
+		t.Errorf("line span = %d-%d, want 2-4", inst.StartLine, inst.EndLine)
+	}
+	if inst.Original != "ONBUILD COPY   --from=nginx:1.27   /a /b" {
+		t.Errorf("Original = %q, want the ONBUILD text", inst.Original)
 	}
 }
