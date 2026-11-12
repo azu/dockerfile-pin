@@ -32,6 +32,8 @@ Each image is reported as one of:
 
 Exit code is 1 (configurable with --exit-code) when any image has FAIL status.
 Use --syntax-only to skip registry verification (only checks digest presence).
+Use --verify-tag to also check that each tag currently resolves to the pinned
+digest. Tags are mutable, so this fails when the tag has moved since pinning.
 Use --format json for machine-readable output (array of objects with
 file, line, image, status, message, original fields).`,
 	Example: `  # Check auto-detected files
@@ -49,6 +51,9 @@ file, line, image, status, message, original fields).`,
   # JSON output for CI integration
   dockerfile-pin check --format json
 
+  # Verify that each tag still points to the pinned digest
+  dockerfile-pin check --verify-tag
+
   # Ignore specific images
   dockerfile-pin check --ignore-images "scratch" --ignore-images "ghcr.io/myorg/*"`,
 	Args: cobra.NoArgs,
@@ -62,6 +67,7 @@ var (
 	checkFormat     string
 	checkIgnore     []string
 	checkExitCode   int
+	checkVerifyTag  bool
 )
 
 func init() {
@@ -71,6 +77,7 @@ func init() {
 	checkCmd.Flags().StringVar(&checkFormat, "format", "text", "Output format: text or json")
 	checkCmd.Flags().StringArrayVar(&checkIgnore, "ignore-images", nil, "Images to ignore (glob patterns, repeatable)")
 	checkCmd.Flags().IntVar(&checkExitCode, "exit-code", 1, "Exit code on failure")
+	checkCmd.Flags().BoolVar(&checkVerifyTag, "verify-tag", false, "Verify that each tag currently resolves to the pinned digest")
 	rootCmd.AddCommand(checkCmd)
 }
 
@@ -84,6 +91,9 @@ type CheckResult struct {
 }
 
 func runCheck(cmd *cobra.Command, args []string) error {
+	if checkVerifyTag && checkSyntaxOnly {
+		return fmt.Errorf("--verify-tag cannot be used with --syntax-only")
+	}
 	files, err := FindFiles(checkFilePath, checkGlob)
 	if err != nil {
 		return err
@@ -143,19 +153,7 @@ func runCheck(cmd *cobra.Command, args []string) error {
 				defer func() { <-sem }()
 
 				// Each goroutine exclusively owns allResults[i], no mutex needed
-				r := &allResults[i]
-				fullRef := r.Image + "@" + r.Message // Message temporarily holds digest
-				exists, err := res.Exists(ctx, fullRef)
-				if err != nil {
-					r.Status = "warn"
-					r.Message = fmt.Sprintf("registry check failed: %v", err)
-				} else if !exists {
-					r.Status = "fail"
-					r.Message = "digest not found in registry"
-				} else {
-					r.Status = "ok"
-					r.Message = ""
-				}
+				verifyCheckResult(ctx, res, &allResults[i], checkVerifyTag)
 			}(idx)
 		}
 		wg.Wait()
@@ -195,6 +193,51 @@ func runCheck(cmd *cobra.Command, args []string) error {
 		os.Exit(checkExitCode)
 	}
 	return nil
+}
+
+// verifyCheckResult resolves a pending CheckResult against the registry.
+// r.Message holds the pinned digest on entry and the final message on return.
+// When verifyTag is true, the tag must also currently resolve to the pinned digest.
+func verifyCheckResult(ctx context.Context, res resolver.DigestResolver, r *CheckResult, verifyTag bool) {
+	digest := r.Message
+	exists, err := res.Exists(ctx, r.Image+"@"+digest)
+	if err != nil {
+		r.Status = "warn"
+		r.Message = fmt.Sprintf("registry check failed: %v", err)
+		return
+	}
+	if !exists {
+		r.Status = "fail"
+		r.Message = "digest not found in registry"
+		return
+	}
+	r.Status = "ok"
+	r.Message = ""
+	if !verifyTag {
+		return
+	}
+	if !hasExplicitTag(r.Image) {
+		// e.g. "node@sha256:..." has no tag to compare against
+		r.Message = "no tag to verify"
+		return
+	}
+	current, err := res.Resolve(ctx, r.Image)
+	if err != nil {
+		r.Status = "warn"
+		r.Message = fmt.Sprintf("tag resolve failed: %v", err)
+		return
+	}
+	if current != digest {
+		r.Status = "fail"
+		r.Message = fmt.Sprintf("tag points to a different digest: %s", current)
+	}
+}
+
+// hasExplicitTag reports whether imageRef (without digest) has an explicit tag.
+// A colon before the last "/" belongs to a registry port, not a tag.
+func hasExplicitTag(imageRef string) bool {
+	lastSlash := strings.LastIndex(imageRef, "/")
+	return strings.Contains(imageRef[lastSlash+1:], ":")
 }
 
 // parseDockerfileForCheck parses a Dockerfile and returns CheckResults.
