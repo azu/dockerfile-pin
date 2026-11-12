@@ -241,7 +241,7 @@ dockerfile-pin check --ignore-images "ghcr.io/myorg/*" --ignore-images "mcr.micr
 By default, `check` only verifies that the pinned digest exists in the registry.
 It does not verify that the tag points to that digest, so `FROM node:24@sha256:<digest-of-node-22>` passes.
 
-`--verify-tag` also resolves each tag and fails when it does not resolve to the pinned digest.
+`--verify-tag` also fetches the digest that each tag points to now (a HEAD request for the tag, the same lookup `run` uses) and fails when it differs from the pinned digest.
 
 ```bash
 dockerfile-pin check --verify-tag
@@ -251,8 +251,14 @@ dockerfile-pin check --verify-tag
 FAIL  Dockerfile:2    FROM busybox:1.37@sha256:73aaf0...    tag points to a different digest: sha256:a7dbc3...
 ```
 
-Tags are mutable. When an upstream image is rebuilt (for example, `node:24` gets a security update), the tag moves to a new digest and this check fails even though nothing in your repository changed.
+This option is off by default because tags are mutable.
+When an upstream image is rebuilt, the tag moves to a new digest and this check fails even though nothing in your repository changed.
+This happens to moving tags like `node:24` and also to specific tags like `node:24.11.1`, because [Docker Official Images are rebuilt](https://github.com/docker-library/faq#why-does-my-security-scanner-show-that-an-image-has-cves) when their base images are updated.
 Run `dockerfile-pin run --write --update` to update the digests, or exclude such images with `--ignore-images`.
+
+This is not the same as verifying a version comment in [pinact](https://github.com/suzuki-shunsuke/pinact/blob/main/docs/codes/001.md).
+A registry only returns the digest a tag points to now, not the digests it pointed to in the past.
+So a failure means "the tag and the pinned digest do not match now", and `--verify-tag` cannot tell whether the upstream image was updated or the digest was replaced with a different image's digest.
 References without a tag (e.g., `node@sha256:...`) are reported as `OK` with `no tag to verify`.
 `--verify-tag` cannot be combined with `--syntax-only`.
 
