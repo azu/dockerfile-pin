@@ -236,6 +236,26 @@ dockerfile-pin check --ignore-images "scratch"
 dockerfile-pin check --ignore-images "ghcr.io/myorg/*" --ignore-images "mcr.microsoft.com/**"
 ```
 
+#### Verify tags (`--verify-tag`)
+
+By default, `check` only verifies that the pinned digest exists in the registry.
+It does not verify that the tag points to that digest, so `FROM node:24@sha256:<digest-of-node-22>` passes.
+
+`--verify-tag` also resolves each tag and fails when it does not resolve to the pinned digest.
+
+```bash
+dockerfile-pin check --verify-tag
+```
+
+```
+FAIL  Dockerfile:2    FROM busybox:1.37@sha256:73aaf0...    tag points to a different digest: sha256:a7dbc3...
+```
+
+Tags are mutable. When an upstream image is rebuilt (for example, `node:24` gets a security update), the tag moves to a new digest and this check fails even though nothing in your repository changed.
+Run `dockerfile-pin run --write --update` to update the digests, or exclude such images with `--ignore-images`.
+References without a tag (e.g., `node@sha256:...`) are reported as `OK` with `no tag to verify`.
+`--verify-tag` cannot be combined with `--syntax-only`.
+
 **Output:**
 
 ```
