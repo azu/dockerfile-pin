@@ -379,12 +379,6 @@ func TestParse_CopyFrom(t *testing.T) {
 			want:  nil,
 		},
 		{
-			// The image is named inside the --mount value, not by a --from flag.
-			name:  "RUN --mount=from= is a different flag",
-			input: "RUN --mount=type=bind,from=nginx:1.27,source=/a,target=/b true\n",
-			want:  nil,
-		},
-		{
 			name:  "empty --from value",
 			input: "COPY --from= /a /b\n",
 			want: []wantInst{
@@ -573,5 +567,132 @@ func TestParse_OnbuildLineSpan(t *testing.T) {
 	}
 	if inst.Original != "ONBUILD COPY   --from=nginx:1.27   /a /b" {
 		t.Errorf("Original = %q, want the ONBUILD text", inst.Original)
+	}
+}
+
+func TestParse_RunMountFrom(t *testing.T) {
+	type wantInst struct {
+		imageRef   string
+		rawRef     string
+		digest     string
+		mountIndex int
+		mountKey   string
+		skip       bool
+		skipReason string
+	}
+	tests := []struct {
+		name  string
+		input string
+		want  []wantInst // only the RUN --mount references
+	}{
+		{
+			name:  "bind mount from an image",
+			input: "FROM a\nRUN --mount=type=bind,from=nginx:1.27,source=/etc/nginx,target=/mnt true\n",
+			want:  []wantInst{{imageRef: "nginx:1.27", rawRef: "nginx:1.27", mountKey: "from"}},
+		},
+		{
+			name:  "cache mount from an image",
+			input: "FROM a\nRUN --mount=type=cache,from=busybox:1.36,target=/cache true\n",
+			want:  []wantInst{{imageRef: "busybox:1.36", rawRef: "busybox:1.36", mountKey: "from"}},
+		},
+		{
+			name:  "type omitted",
+			input: "FROM a\nRUN --mount=from=nginx:1.27,target=/mnt true\n",
+			want:  []wantInst{{imageRef: "nginx:1.27", rawRef: "nginx:1.27", mountKey: "from"}},
+		},
+		{
+			name:  "already pinned",
+			input: "FROM a\nRUN --mount=from=nginx:1.27@sha256:abc,target=/mnt true\n",
+			want:  []wantInst{{imageRef: "nginx:1.27", rawRef: "nginx:1.27@sha256:abc", digest: "sha256:abc", mountKey: "from"}},
+		},
+		{
+			name:  "several mounts yield several references",
+			input: "FROM a\nRUN --mount=type=cache,target=/c --mount=from=nginx:1.27,target=/n --network=none --mount=from=busybox:1,target=/b true\n",
+			want: []wantInst{
+				{imageRef: "nginx:1.27", rawRef: "nginx:1.27", mountIndex: 1, mountKey: "from"},
+				{imageRef: "busybox:1", rawRef: "busybox:1", mountIndex: 2, mountKey: "from"},
+			},
+		},
+		{
+			name:  "no from option reads the build context",
+			input: "FROM a\nRUN --mount=type=bind,source=/a,target=/b --mount=type=secret,id=x --mount=type=cache,target=/c true\n",
+			want:  nil,
+		},
+		{
+			name:  "empty from is the same as none",
+			input: "FROM a\nRUN --mount=type=bind,from=,target=/b true\n",
+			want:  nil,
+		},
+		{
+			name:  "stage declared above",
+			input: "FROM a AS builder\nFROM b\nRUN --mount=from=builder,target=/b true\n",
+			want:  []wantInst{{imageRef: "builder", rawRef: "builder", mountKey: "from", skip: true, skipReason: SkipStageRef}},
+		},
+		{
+			name:  "stage declared below",
+			input: "FROM b\nRUN --mount=from=Later,target=/b true\nFROM a AS later\n",
+			want:  []wantInst{{imageRef: "Later", rawRef: "Later", mountKey: "from", skip: true, skipReason: SkipStageRef}},
+		},
+		{
+			name:  "scratch",
+			input: "FROM a\nRUN --mount=from=scratch,target=/b true\n",
+			want:  []wantInst{{imageRef: "scratch", rawRef: "scratch", mountKey: "from", skip: true, skipReason: SkipScratch}},
+		},
+		{
+			name:  "variable is not expanded",
+			input: "ARG TAG=1\nFROM a\nRUN --mount=from=nginx:${TAG},target=/b true\n",
+			want:  []wantInst{{imageRef: "nginx:${TAG}", rawRef: "nginx:${TAG}", mountKey: "from", skip: true, skipReason: SkipMountFromVar}},
+		},
+		{
+			// BuildKit looks a mount source up by stage name only, so a number is an image name.
+			name:  "number is not a stage index",
+			input: "FROM a\nRUN --mount=from=0,target=/b true\n",
+			want:  []wantInst{{imageRef: "0", rawRef: "0", mountKey: "from"}},
+		},
+		{
+			name:  "option key in another case",
+			input: "FROM a\nRUN --mount=type=bind,FROM=nginx:1.27,target=/b true\n",
+			want:  []wantInst{{imageRef: "nginx:1.27", rawRef: "nginx:1.27", mountKey: "FROM"}},
+		},
+		{
+			name:  "quoted value",
+			input: "FROM a\nRUN --mount=type=bind,from=\"nginx:1.27\",target=/b true\n",
+			want:  []wantInst{{imageRef: "nginx:1.27", rawRef: "nginx:1.27", mountKey: "from"}},
+		},
+		{
+			name:  "text in the command is not a flag",
+			input: "FROM a\nRUN echo --mount=from=nginx:1.27\n",
+			want:  nil,
+		},
+		{
+			name:  "ONBUILD RUN ignores this file's stages",
+			input: "FROM a AS nginx\nONBUILD RUN --mount=from=nginx,target=/b true\n",
+			want:  []wantInst{{imageRef: "nginx", rawRef: "nginx", mountKey: "from"}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			all, err := Parse(strings.NewReader(tt.input))
+			if err != nil {
+				t.Fatalf("Parse() error = %v", err)
+			}
+			var got []FromInstruction
+			for _, inst := range all {
+				if inst.IsMountFrom {
+					got = append(got, inst)
+				}
+			}
+			if len(got) != len(tt.want) {
+				t.Fatalf("got %d mount references, want %d: %+v", len(got), len(tt.want), got)
+			}
+			for i, w := range tt.want {
+				g := got[i]
+				if g.ImageRef != w.imageRef || g.RawRef != w.rawRef || g.Digest != w.digest ||
+					g.MountIndex != w.mountIndex || g.MountKey != w.mountKey ||
+					g.Skip != w.skip || g.SkipReason != w.skipReason {
+					t.Errorf("[%d] = %+v, want %+v", i, g, w)
+				}
+			}
+		})
 	}
 }

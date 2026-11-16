@@ -4,7 +4,7 @@
 
 ## この文書について
 
-この機能は、Dockerfileの`FROM`と`COPY --from=`からDockerイメージの参照を読み取り、各参照が書かれている場所にdigestを書き込みます。
+この機能は、Dockerfileの`FROM`、`COPY --from=`、`RUN --mount`の`from=`オプションからDockerイメージの参照を読み取り、各参照が書かれている場所にdigestを書き込みます。
 `run`は読み取った参照をpinし、`check`はその参照について報告します。
 親のProductは[dockerfile-pin](../../product.ja.md)です。
 
@@ -19,8 +19,8 @@
 
 - Dockerfileを探すこと。[対象ファイルの探索](../target-file-discovery/requirements.ja.md)に属します。
 - digestの解決と、`run`と`check`の出力。[pin](../pinning/requirements.ja.md)と[check](../checking/requirements.ja.md)に属します。
-- `ADD --from=`と`RUN --mount=...,from=...`。読み取りません。
-- 名前付きビルドコンテキスト（`docker buildx build --build-context name=...`）。どのステージにも一致しない`COPY --from=<name>`は、Dockerfileだけでは区別できないので、イメージとして読みます。
+- `ADD --from=`。読み取りません。Dockerfileのリファレンスには、`ADD`にそのようなオプションがありません。
+- 名前付きビルドコンテキスト（`docker buildx build --build-context name=...`）。どのステージにも一致しない`COPY --from=<name>`や`RUN --mount=...,from=<name>`は、Dockerfileだけでは区別できないので、イメージとして読みます。
 
 ## ユーザーストーリー
 
@@ -84,6 +84,36 @@ Dockerfileを管理する開発者として、`run`で`FROM`にdigestを付け�
 - 操作: 開発者が`dockerfile-pin run --write`を実行する。
 - 結果: イメージ`nginx`のdigestが`ONBUILD`の行に書かれる。
 
+### マウント元のイメージをpinする
+
+`RUN`の実行中に外部のイメージからファイルをマウントする開発者として、`RUN --mount=...,from=`のイメージもpinしたい。そのようなイメージがpinされていないのに`check`が通ってしまわないようにするためである。
+
+**受け入れ基準:**
+
+シナリオ: `RUN --mount`が`from=`でイメージを指すとき、そのオプションにdigestを書く
+
+- 前提: Dockerfileに`RUN --mount=type=bind,from=nginx:1.27,source=/etc/nginx,target=/mnt cp -r /mnt /etc/nginx`がある。
+- 操作: 開発者が`dockerfile-pin run --write`を実行する。
+- 結果: オプションが`from=nginx:1.27@sha256:<digest>`になり、ほかのオプションとコマンドは変わらない。
+
+シナリオ: 1つの`RUN`に複数のマウントがあるとき、それぞれの`from=`が別の参照になる
+
+- 前提: `RUN`に`--mount=from=nginx:1.27,target=/a`と`--mount=from=nginx:1.27,target=/b`がある。
+- 操作: 開発者が`dockerfile-pin run --write`を実行する。
+- 結果: どちらのオプションも`from=nginx:1.27@sha256:<digest>`になり、それぞれの`@sha256:`はちょうど1つである。
+
+シナリオ: `from=`がステージや`scratch`を指すとき、または変数を含むとき、スキップする
+
+- 前提: Dockerfileがステージ`builder`を宣言し、`RUN --mount=from=builder,target=/a`、`RUN --mount=from=scratch,target=/a`、`RUN --mount=from=image:${TAG},target=/a`がある。
+- 操作: 開発者が`dockerfile-pin check`を実行する。
+- 結果: それぞれ`SKIP`として、`stage reference`、`scratch image`、`unexpanded variable in RUN --mount from`の理由で報告される。
+
+シナリオ: マウントに`from=`がないとき、参照にならない
+
+- 前提: Dockerfileに`RUN --mount=type=cache,target=/root/.cache make`がある。
+- 操作: 開発者が`dockerfile-pin check`を実行する。
+- 結果: その`RUN`については何も報告されない。
+
 ### 複数行に分かれた参照をpinする
 
 長い命令を行継続で折り返す開発者として、digestが正しい場所に入ってほしい。ファイルが気付かないうちにpinされないままになるのを防ぐためだ。
@@ -110,7 +140,7 @@ Dockerfileを管理する開発者として、`run`で`FROM`にdigestを付け�
 
 ### 参照の読み取り
 
-**概要:** すべての`FROM`、`--from=`フラグのあるすべての`COPY`、`--from=`フラグのあるすべての`ONBUILD COPY`が、それぞれ1つの参照になります。
+**概要:** すべての`FROM`、`--from=`フラグのあるすべての`COPY`と`ONBUILD COPY`、`RUN`と`ONBUILD RUN`の`--mount`フラグのうち`from=`オプションを持つものが、それぞれ1つの参照になります。
 
 **入力:** Dockerfileの内容。
 
@@ -130,6 +160,14 @@ Dockerfileを管理する開発者として、`run`で`FROM`にdigestを付け�
 整数の値はステージの番号です。`$`を含む値は展開しません。
 その名前のステージがファイルのどこかで宣言されていれば、名前はステージ参照です。
 `ONBUILD COPY`には、このファイルのステージ名を当てはめません。そのトリガーは、このイメージをベースに使うビルドの中で動くためです。
+
+##### RUN --mount from
+
+`RUN`のコマンドより前に書かれた`--mount=`フラグを、それぞれカンマ区切りの`key=value`のオプションの並びとして読みます。マウントの`type`が何であっても、`from`の値が参照です（[Dockerfileのリファレンス](https://docs.docker.com/reference/dockerfile/#run---mount)）。
+オプションのキーは大文字と小文字を区別せずに比べるので、`FROM=`も読みます。`from`がないマウントと、`from`が空のマウントは参照になりません。ビルドコンテキストを読むか、何も読まないためです。
+`$`を含む値は展開しません。BuildKitがここでの変数を拒否するためです。
+その名前のステージがファイルのどこかで宣言されていれば、名前はステージ参照です。`COPY --from=`と違い、整数はステージの番号ではありません。BuildKitはこの値をステージ名の中からだけ探すので、`from=0`は`0`という名前のイメージとして読みます。
+`ONBUILD RUN`には、`ONBUILD COPY`と同じく、このファイルのステージ名を当てはめません。
 
 ##### digestとステージ
 
@@ -152,6 +190,7 @@ digest付きの参照は、ステージ参照にはなりません。digestを�
 | `COPY --from=`のステージの番号 | `stage index reference` |
 | 既定値のない`FROM`の変数 | `unresolved ARG variable` |
 | `COPY --from=`の変数 | `unexpanded variable in COPY --from` |
+| `RUN --mount=...,from=`の変数 | `unexpanded variable in RUN --mount from` |
 
 スキップした参照は`check`が報告し、`run`は変えません。
 
@@ -170,6 +209,7 @@ Dockerfileのパーサーが受け付けないファイルは、ファイル名�
 #### 適用条件
 
 既存のdigestは置き換えます。`COPY`では`--from=`の後ろの文字列だけを変えるので、同じ行のほかの場所にある同じ文字列は書かれたままです。
+`RUN --mount`では、そのマウントのフラグの中の`from=`の後ろの文字列だけを変えるので、ほかのオプション、ほかのマウント、コマンドにある同じ文字列は書かれたままです。引用符で囲んだ値は引用符を残します。
 変数は書かれたまま残します。`FROM image:${VERSION}`は`FROM image:${VERSION}@<digest>`になります。
 コメント、行継続、ほかの行を含め、それ以外の文字列は変えません。
 
@@ -193,7 +233,7 @@ Dockerfileのパーサーが受け付けないファイルは、ファイル名�
 
 ## セキュリティ上の考慮事項
 
-ビルドがdockerfile-pinとは違う読み方をする参照を、pin済みとして報告してはいけません。スキップの規則はBuildKitが`FROM`と`COPY --from`を読む方法に合わせてあり、pinしていないイメージをpullする行を`check`が`OK`と報告しないようにしています。
+ビルドがdockerfile-pinとは違う読み方をする参照を、pin済みとして報告してはいけません。スキップの規則はBuildKitが`FROM`、`COPY --from`、`RUN --mount`を読む方法に合わせてあり、pinしていないイメージをpullする行を`check`が`OK`と報告しないようにしています。
 
 ## 未決事項
 

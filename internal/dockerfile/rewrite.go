@@ -19,7 +19,7 @@ func AddCopyFromDigest(original string, rawRef string, digest string) string {
 // the reference is not found there.
 func addDigestAfter(line string, prefix string, rawRef string, digest string) string {
 	lines := []string{line}
-	if !rewriteSpan(lines, 0, 0, prefix, rawRef, digest, defaultEscape) {
+	if !rewriteSpan(lines, 0, 0, target{prefixes: []string{prefix}, rawRef: rawRef, mountIndex: -1}, digest, defaultEscape) {
 		return line
 	}
 	return lines[0]
@@ -43,10 +43,6 @@ func RewriteFileReport(content string, instructions []FromInstruction, digests m
 		if !ok || inst.Skip {
 			continue
 		}
-		prefix := ""
-		if inst.IsCopyFrom {
-			prefix = copyFromFlag
-		}
 		first, last := inst.StartLine-1, lastLineIndex(inst)
 		if first < 0 || first >= len(lines) {
 			unrewritten = append(unrewritten, i)
@@ -55,11 +51,90 @@ func RewriteFileReport(content string, instructions []FromInstruction, digests m
 		if last >= len(lines) {
 			last = len(lines) - 1
 		}
-		if !rewriteSpan(lines, first, last, prefix, inst.RawRef, digest, escapeByte(inst.EscapeToken)) {
+		if !rewriteSpan(lines, first, last, targetOf(inst), digest, escapeByte(inst.EscapeToken)) {
 			unrewritten = append(unrewritten, i)
 		}
 	}
 	return strings.Join(lines, "\n"), unrewritten
+}
+
+// target says where in an instruction's text a reference is written.
+type target struct {
+	// prefixes are the texts that may come right before the reference; the first
+	// one found is used. An empty prefix matches the reference anywhere.
+	prefixes []string
+	rawRef   string
+	// mountIndex, when not negative, limits the search to the text from that
+	// --mount flag on, so that two mounts naming the same image stay apart.
+	mountIndex int
+}
+
+func targetOf(inst FromInstruction) target {
+	switch {
+	case inst.IsCopyFrom:
+		return target{prefixes: []string{copyFromFlag}, rawRef: inst.RawRef, mountIndex: -1}
+	case inst.IsMountFrom:
+		key := inst.MountKey
+		if key == "" {
+			key = mountFromKey
+		}
+		// The parser drops quotes around a value, so the source may have them.
+		return target{
+			prefixes:   []string{key + "=", key + `="`, key + `='`},
+			rawRef:     inst.RawRef,
+			mountIndex: inst.MountIndex,
+		}
+	}
+	return target{prefixes: []string{""}, rawRef: inst.RawRef, mountIndex: -1}
+}
+
+// find returns where prefix+rawRef starts in the instruction text and the prefix
+// that matched, or -1 when the reference is not written there.
+func (t target) find(logical string) (int, string) {
+	start := 0
+	if t.mountIndex >= 0 {
+		start = mountFlagOffset(logical, t.mountIndex)
+		if start < 0 {
+			return -1, ""
+		}
+	}
+	end := len(logical)
+	if t.mountIndex >= 0 {
+		// The reference belongs to this flag, so the next one bounds the search.
+		if next := mountFlagOffset(logical, t.mountIndex+1); next >= 0 {
+			end = next
+		}
+	}
+	best, bestPrefix := -1, ""
+	for _, prefix := range t.prefixes {
+		idx := strings.Index(logical[start:end], prefix+t.rawRef)
+		if idx >= 0 && (best < 0 || start+idx < best) {
+			best, bestPrefix = start+idx, prefix
+		}
+	}
+	return best, bestPrefix
+}
+
+// mountFlagOffset returns where the n-th (0-based) --mount flag starts in an
+// instruction's text, or -1 when there are fewer. Flags come before the command, so
+// the first n+1 occurrences are the flags even if the command repeats the text.
+func mountFlagOffset(logical string, n int) int {
+	offset := 0
+	for {
+		idx := strings.Index(logical[offset:], mountFlag)
+		if idx < 0 {
+			return -1
+		}
+		pos := offset + idx
+		// A flag starts a word: "x--mount=" inside another word is not one.
+		if pos > 0 && (logical[pos-1] == ' ' || logical[pos-1] == '\t' || logical[pos-1] == '"' || logical[pos-1] == '\'') {
+			if n == 0 {
+				return pos
+			}
+			n--
+		}
+		offset = pos + len(mountFlag)
+	}
 }
 
 // rewriteSpan pins the reference inside the lines an instruction covers, editing lines
@@ -69,12 +144,13 @@ func RewriteFileReport(content string, instructions []FromInstruction, digests m
 // reference broken up by a "\" continuation is still found, and the digest still lands
 // in the right place. Rewriting each physical line on its own would miss those and
 // leave the file silently unchanged.
-func rewriteSpan(lines []string, first, last int, prefix, rawRef, digest string, escape byte) bool {
+func rewriteSpan(lines []string, first, last int, t target, digest string, escape byte) bool {
+	rawRef := t.rawRef
 	if rawRef == "" {
 		return false
 	}
 	logical, origin := joinContinued(lines, first, last, escape)
-	idx := strings.Index(logical, prefix+rawRef)
+	idx, prefix := t.find(logical)
 	if idx < 0 {
 		return false
 	}

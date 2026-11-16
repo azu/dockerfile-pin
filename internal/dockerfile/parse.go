@@ -1,6 +1,7 @@
 package dockerfile
 
 import (
+	"encoding/csv"
 	"io"
 	"strconv"
 	"strings"
@@ -14,6 +15,16 @@ import (
 // unknown flag rather than treating it as --from.
 const copyFromFlag = "--from="
 
+// mountFlag is the RUN flag that mounts a filesystem for one command. Its from=
+// option names what to mount from: an external image, a build stage, or a named
+// build context.
+// https://docs.docker.com/reference/dockerfile/#run---mount
+const mountFlag = "--mount="
+
+// mountFromKey is the option of a mount that names its source. BuildKit lowercases
+// option keys before comparing them, so "FROM=" is this option too.
+const mountFromKey = "from"
+
 // Reasons reported in FromInstruction.SkipReason when an instruction is not pinnable.
 const (
 	SkipMissingRef    = "missing image reference"
@@ -22,10 +33,12 @@ const (
 	SkipStageIndex    = "stage index reference"
 	SkipUnresolvedARG = "unresolved ARG variable"
 	SkipCopyFromVar   = "unexpanded variable in COPY --from"
+	SkipMountFromVar  = "unexpanded variable in RUN --mount from"
 )
 
-// FromInstruction represents a pinnable image reference in a Dockerfile: either a
-// FROM instruction or the --from= flag of a COPY instruction.
+// FromInstruction represents a pinnable image reference in a Dockerfile: a FROM
+// instruction, the --from= flag of a COPY instruction, or the from= option of a
+// RUN --mount flag.
 type FromInstruction struct {
 	ImageRef   string // image ref without digest, after ARG expansion (e.g., "node:20.11.1")
 	RawRef     string // as written in Dockerfile (may contain ${VAR}, may include digest)
@@ -37,7 +50,14 @@ type FromInstruction struct {
 	Original   string // original instruction text, with any line continuations joined
 	Skip       bool
 	SkipReason string
-	IsCopyFrom bool // true for COPY --from=<ref>, false for FROM
+	IsCopyFrom bool // true for COPY --from=<ref>
+	// IsMountFrom is true for RUN --mount=...,from=<ref>. MountIndex is then the
+	// position of that --mount flag among the instruction's --mount flags, and
+	// MountKey the option key as written ("from", or another casing of it), which
+	// together tell the rewriter where the reference is.
+	IsMountFrom bool
+	MountIndex  int
+	MountKey    string
 	// EscapeToken is the character that continues a line, from the "# escape="
 	// parser directive. Zero means the Dockerfile default, a backslash.
 	// https://docs.docker.com/reference/dockerfile/#escape
@@ -45,7 +65,7 @@ type FromInstruction struct {
 }
 
 // Parse reads a Dockerfile from r and returns every pinnable image reference:
-// each FROM instruction and each COPY --from=<ref>.
+// each FROM instruction, each COPY --from=<ref>, and each RUN --mount=...,from=<ref>.
 func Parse(r io.Reader) ([]FromInstruction, error) {
 	result, err := parser.Parse(r)
 	if err != nil {
@@ -82,16 +102,25 @@ func Parse(r io.Reader) ([]FromInstruction, error) {
 			if inst, ok := parseCopyFromNode(node, allStages); ok {
 				instructions = append(instructions, inst)
 			}
+		case "run":
+			instructions = append(instructions, parseRunMountNode(node, allStages)...)
 		case "onbuild":
 			// The wrapped instruction is only recorded into this image's config here;
 			// it runs later, inside whichever build uses this image as its base, and is
 			// resolved against *that* Dockerfile's stages. The names declared in this
 			// file are gone by then, so none of them is passed: a bare name in an
 			// ONBUILD trigger is an image to resolve, not a stage to skip.
-			if child := onbuildChild(node); child != nil && strings.ToLower(child.Value) == "copy" {
+			child := onbuildChild(node)
+			if child == nil {
+				continue
+			}
+			switch strings.ToLower(child.Value) {
+			case "copy":
 				if inst, ok := parseCopyFromNode(child, nil); ok {
 					instructions = append(instructions, inst)
 				}
+			case "run":
+				instructions = append(instructions, parseRunMountNode(child, nil)...)
 			}
 		}
 	}
@@ -225,6 +254,72 @@ func parseCopyFromNode(node *parser.Node, stageNames map[string]bool) (FromInstr
 
 	inst.ImageRef, inst.Digest, inst.SkipReason, inst.Skip = classifyRef(fromValue, stageNames)
 	return inst, true
+}
+
+// parseRunMountNode returns one FromInstruction for each --mount flag of a RUN node
+// that names a source with from=. A mount without from= reads the build context or
+// nothing at all, so it has nothing to pin.
+func parseRunMountNode(node *parser.Node, stageNames map[string]bool) []FromInstruction {
+	var instructions []FromInstruction
+	mountIndex := -1
+	for _, flag := range node.Flags {
+		value, ok := strings.CutPrefix(flag, mountFlag)
+		if !ok {
+			continue
+		}
+		mountIndex++
+		key, fromValue, ok := mountFromOption(value)
+		// BuildKit treats an empty from= like a missing one.
+		if !ok || fromValue == "" {
+			continue
+		}
+
+		inst := FromInstruction{
+			StartLine:   node.StartLine,
+			EndLine:     node.EndLine,
+			Original:    node.Original,
+			RawRef:      fromValue,
+			ImageRef:    fromValue,
+			IsMountFrom: true,
+			MountIndex:  mountIndex,
+			MountKey:    key,
+		}
+
+		// BuildKit refuses a variable here ("'from' doesn't support variable
+		// expansion, define alias stage instead"), so the value is left alone rather
+		// than pinned to whatever the variable would have expanded to.
+		if strings.ContainsRune(fromValue, '$') {
+			inst.Skip = true
+			inst.SkipReason = SkipMountFromVar
+			instructions = append(instructions, inst)
+			continue
+		}
+
+		// Unlike COPY --from, a number is not a stage index here: BuildKit looks the
+		// value up among stage names only, and otherwise pulls it as an image.
+		inst.ImageRef, inst.Digest, inst.SkipReason, inst.Skip = classifyRef(fromValue, stageNames)
+		instructions = append(instructions, inst)
+	}
+	return instructions
+}
+
+// mountFromOption returns the from option of a --mount flag value, with the key as
+// written. The value is a comma-separated list of key=value options; when from is
+// repeated the last one wins, as in BuildKit.
+func mountFromOption(mount string) (key, value string, found bool) {
+	reader := csv.NewReader(strings.NewReader(mount))
+	reader.LazyQuotes = true
+	fields, err := reader.Read()
+	if err != nil {
+		return "", "", false
+	}
+	for _, field := range fields {
+		k, v, ok := strings.Cut(field, "=")
+		if ok && strings.ToLower(k) == mountFromKey {
+			key, value, found = k, v, true
+		}
+	}
+	return key, value, found
 }
 
 // copyFromValue returns the value of the --from= flag among a COPY node's flags.

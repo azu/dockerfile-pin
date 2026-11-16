@@ -4,7 +4,7 @@
 
 ## About this document
 
-This feature reads Docker image references from the `FROM` and `COPY --from=` instructions of a Dockerfile, and writes a digest onto each reference where it is written.
+This feature reads Docker image references from `FROM`, `COPY --from=`, and the `from=` option of `RUN --mount` in a Dockerfile, and writes a digest onto each reference where it is written.
 `run` pins the references it reads, and `check` reports on them.
 It belongs to [dockerfile-pin](../../product.md).
 
@@ -19,8 +19,8 @@ It belongs to [dockerfile-pin](../../product.md).
 
 - Finding Dockerfiles, which belongs to [Target file discovery](../target-file-discovery/requirements.md).
 - Resolving digests and the output of `run` and `check`, which belong to [Pinning](../pinning/requirements.md) and [Checking](../checking/requirements.md).
-- `ADD --from=` and `RUN --mount=...,from=...`. They are not read.
-- Named build contexts (`docker buildx build --build-context name=...`). A `COPY --from=<name>` that matches no stage is read as an image, because the two cannot be told apart from the Dockerfile alone.
+- `ADD --from=`. It is not read; the Dockerfile reference lists no such option for `ADD`.
+- Named build contexts (`docker buildx build --build-context name=...`). A `COPY --from=<name>` or `RUN --mount=...,from=<name>` that matches no stage is read as an image, because the two cannot be told apart from the Dockerfile alone.
 
 ## User stories
 
@@ -84,6 +84,36 @@ Scenario: When `ONBUILD COPY --from=` names an image, it is pinned even if a sta
 - When: The developer runs `dockerfile-pin run --write`.
 - Then: The digest of the image `nginx` is written into the `ONBUILD` line.
 
+### Pin images mounted from
+
+As a developer who mounts files from external images during `RUN`, I want `RUN --mount=...,from=` images to be pinned so that `check` does not pass while such an image is unpinned.
+
+**Acceptance criteria:**
+
+Scenario: When `RUN --mount` names an image in `from=`, the digest is written into that option
+
+- Given: A Dockerfile has `RUN --mount=type=bind,from=nginx:1.27,source=/etc/nginx,target=/mnt cp -r /mnt /etc/nginx`.
+- When: The developer runs `dockerfile-pin run --write`.
+- Then: The option becomes `from=nginx:1.27@sha256:<digest>`, and the other options and the command are unchanged.
+
+Scenario: When a `RUN` has several mounts, each `from=` is its own reference
+
+- Given: A `RUN` has `--mount=from=nginx:1.27,target=/a` and `--mount=from=nginx:1.27,target=/b`.
+- When: The developer runs `dockerfile-pin run --write`.
+- Then: Both options become `from=nginx:1.27@sha256:<digest>`, each with exactly one `@sha256:`.
+
+Scenario: When `from=` names a stage, `scratch`, or contains a variable, it is skipped
+
+- Given: A Dockerfile declares a stage `builder` and has `RUN --mount=from=builder,target=/a`, `RUN --mount=from=scratch,target=/a`, and `RUN --mount=from=image:${TAG},target=/a`.
+- When: The developer runs `dockerfile-pin check`.
+- Then: They are reported as `SKIP` with `stage reference`, `scratch image`, and `unexpanded variable in RUN --mount from`.
+
+Scenario: When a mount has no `from=`, it yields no reference
+
+- Given: A Dockerfile has `RUN --mount=type=cache,target=/root/.cache make`.
+- When: The developer runs `dockerfile-pin check`.
+- Then: Nothing is reported for that `RUN`.
+
 ### Pin references split over lines
 
 As a developer who breaks long instructions with line continuations, I want the digest to land in the right place so that the file is not silently left unpinned.
@@ -110,7 +140,7 @@ None. dockerfile-pin does not collect usage data.
 
 ### Reading references
 
-**Overview:** Every `FROM`, every `COPY` with a `--from=` flag, and every `ONBUILD COPY` with a `--from=` flag yields one reference.
+**Overview:** Every `FROM`, every `COPY` or `ONBUILD COPY` with a `--from=` flag, and every `--mount` flag of a `RUN` or `ONBUILD RUN` that has a `from=` option yields one reference.
 
 **Input:** The content of a Dockerfile.
 
@@ -130,6 +160,14 @@ The flag name is matched as `--from=` exactly; `--FROM=` is not read.
 A value that is an integer is a stage index. A value containing `$` is not expanded.
 A name is a stage reference when a stage with that name is declared anywhere in the file.
 For `ONBUILD COPY`, the stage names of this file do not apply, because the trigger runs in the build that uses this image as its base.
+
+##### RUN --mount from
+
+Each `--mount=` flag written before the command of a `RUN` is read as a comma-separated list of `key=value` options, and the value of `from` is the reference, whatever the mount `type` is ([Dockerfile reference](https://docs.docker.com/reference/dockerfile/#run---mount)).
+The option key is matched without regard to case, so `FROM=` is read too. A mount with no `from`, or with an empty one, yields no reference, because it reads the build context or nothing.
+A value containing `$` is not expanded, because BuildKit rejects a variable there.
+A name is a stage reference when a stage with that name is declared anywhere in the file. An integer is not a stage index here, unlike `COPY --from=`: BuildKit looks the value up among stage names only, so `from=0` is read as an image named `0`.
+For `ONBUILD RUN`, the stage names of this file do not apply, as with `ONBUILD COPY`.
 
 ##### Digests and stages
 
@@ -152,6 +190,7 @@ A `# escape=` parser directive changes the line-continuation character, and it i
 | A stage index in `COPY --from=` | `stage index reference` |
 | A `FROM` variable without a default | `unresolved ARG variable` |
 | A variable in `COPY --from=` | `unexpanded variable in COPY --from` |
+| A variable in `RUN --mount=...,from=` | `unexpanded variable in RUN --mount from` |
 
 Skipped references are reported by `check` and left unchanged by `run`.
 
@@ -170,6 +209,7 @@ A file the Dockerfile parser rejects is reported as an error naming the file, an
 #### Applicable conditions
 
 An existing digest is replaced. For `COPY`, only the text after `--from=` is changed, so the same text elsewhere on the line stays as written.
+For `RUN --mount`, only the text after `from=` inside that mount flag is changed, so the same text in another option, another mount, or the command stays as written. A value written in quotes keeps its quotes.
 Variables stay as written: `FROM image:${VERSION}` becomes `FROM image:${VERSION}@<digest>`.
 All other text, including comments, continuations, and other lines, is unchanged.
 
@@ -193,7 +233,7 @@ None. Contacting registries belongs to Pinning and Checking.
 
 ## Security considerations
 
-A reference that the build would read differently from dockerfile-pin must not be reported as pinned. The skip rules follow how BuildKit reads `FROM` and `COPY --from`, so that `check` does not report `OK` for a line that pulls an unpinned image.
+A reference that the build would read differently from dockerfile-pin must not be reported as pinned. The skip rules follow how BuildKit reads `FROM`, `COPY --from`, and `RUN --mount`, so that `check` does not report `OK` for a line that pulls an unpinned image.
 
 ## Open questions
 

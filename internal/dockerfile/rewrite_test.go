@@ -478,3 +478,77 @@ func TestRewriteFile_OnbuildPinsNameMatchingLocalStage(t *testing.T) {
 		t.Errorf("RewriteFile() =\n%s\nwant:\n%s", got, want)
 	}
 }
+
+func TestRewriteFile_RunMountFrom(t *testing.T) {
+	const d = "sha256:aaa111"
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "bind mount",
+			input: "FROM scratch\nRUN --mount=type=bind,from=nginx:1.27,source=/etc/nginx,target=/mnt cp -r /mnt /etc\n",
+			want:  "FROM scratch\nRUN --mount=type=bind,from=nginx:1.27@" + d + ",source=/etc/nginx,target=/mnt cp -r /mnt /etc\n",
+		},
+		{
+			name:  "from is the last option",
+			input: "FROM scratch\nRUN --mount=target=/mnt,from=nginx:1.27 true\n",
+			want:  "FROM scratch\nRUN --mount=target=/mnt,from=nginx:1.27@" + d + " true\n",
+		},
+		{
+			name:  "existing digest is replaced",
+			input: "FROM scratch\nRUN --mount=from=nginx:1.27@sha256:old,target=/mnt true\n",
+			want:  "FROM scratch\nRUN --mount=from=nginx:1.27@" + d + ",target=/mnt true\n",
+		},
+		{
+			name:  "two mounts of the same image are each pinned once",
+			input: "FROM scratch\nRUN --mount=from=nginx:1.27,target=/a --mount=from=nginx:1.27,target=/b true\n",
+			want:  "FROM scratch\nRUN --mount=from=nginx:1.27@" + d + ",target=/a --mount=from=nginx:1.27@" + d + ",target=/b true\n",
+		},
+		{
+			name:  "same text in another option and in the command stays",
+			input: "FROM scratch\nRUN --mount=type=bind,source=nginx:1.27,from=nginx:1.27,target=/a echo from=nginx:1.27\n",
+			want:  "FROM scratch\nRUN --mount=type=bind,source=nginx:1.27,from=nginx:1.27@" + d + ",target=/a echo from=nginx:1.27\n",
+		},
+		{
+			name:  "mounts on continued lines",
+			input: "FROM scratch\nRUN --mount=type=cache,target=/c \\\n    --mount=type=bind,from=nginx:1.27,target=/a \\\n    --mount=type=bind,from=busybox:1,target=/b \\\n    true\n",
+			want:  "FROM scratch\nRUN --mount=type=cache,target=/c \\\n    --mount=type=bind,from=nginx:1.27@" + d + ",target=/a \\\n    --mount=type=bind,from=busybox:1@" + d + ",target=/b \\\n    true\n",
+		},
+		{
+			name:  "quoted value and upper case key",
+			input: "FROM scratch\nRUN --mount=type=bind,FROM=\"nginx:1.27\",target=/a true\n",
+			want:  "FROM scratch\nRUN --mount=type=bind,FROM=\"nginx:1.27@" + d + "\",target=/a true\n",
+		},
+		{
+			name:  "ONBUILD RUN",
+			input: "FROM scratch\nONBUILD RUN --mount=from=nginx:1.27,target=/a true\n",
+			want:  "FROM scratch\nONBUILD RUN --mount=from=nginx:1.27@" + d + ",target=/a true\n",
+		},
+		{
+			name:  "stage and variable are left alone",
+			input: "FROM scratch AS base\nRUN --mount=from=base,target=/a --mount=from=img:${TAG},target=/b true\n",
+			want:  "FROM scratch AS base\nRUN --mount=from=base,target=/a --mount=from=img:${TAG},target=/b true\n",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			insts, err := Parse(strings.NewReader(tt.input))
+			if err != nil {
+				t.Fatalf("Parse() error = %v", err)
+			}
+			digests := map[int]string{}
+			for i := range insts {
+				digests[i] = d
+			}
+			got, unrewritten := RewriteFileReport(tt.input, insts, digests)
+			if got != tt.want {
+				t.Errorf("RewriteFileReport() =\n%s\nwant\n%s", got, tt.want)
+			}
+			if len(unrewritten) != 0 {
+				t.Errorf("unrewritten = %v, want none", unrewritten)
+			}
+		})
+	}
+}

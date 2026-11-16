@@ -61,7 +61,7 @@ CIで検査しないと、digestのない新しい参照が気付かれずにマ
 
 | 機能 | 説明 | 仕様 |
 | --- | --- | --- |
-| Dockerfileのイメージ参照 | `FROM`と`COPY --from=`からイメージ参照を読み取り、digestを書き込む |[Requirements](features/dockerfile-image-references/requirements.ja.md) |
+| Dockerfileのイメージ参照 | `FROM`、`COPY --from=`、`RUN --mount=...,from=`からイメージ参照を読み取り、digestを書き込む |[Requirements](features/dockerfile-image-references/requirements.ja.md) |
 | YAMLのイメージ参照 | composeファイル、GitHub Actionsのファイル、GitLab CIのファイルからイメージ参照を読み取り、digestを書き込む | [Requirements](features/yaml-image-references/requirements.ja.md) |
 | 対象ファイルの探索 | `-f`、`--glob`、既定のパターンから対象ファイルを探し、各ファイルの種類を決める |[Requirements](features/target-file-discovery/requirements.ja.md) |
 | pin | `run`がタグをdigestに解決し、pinしたファイルを表示するか書き込む |[Requirements](features/pinning/requirements.ja.md) |
