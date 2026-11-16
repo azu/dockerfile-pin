@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/azu/dockerfile-pin/internal/yamlnode"
 	"gopkg.in/yaml.v3"
 )
 
@@ -26,11 +27,11 @@ func Parse(content []byte) ([]ComposeImageRef, error) {
 	if doc.Kind != yaml.DocumentNode || len(doc.Content) == 0 {
 		return nil, fmt.Errorf("invalid YAML document")
 	}
-	root := doc.Content[0]
-	if root.Kind != yaml.MappingNode {
+	root := yamlnode.Resolve(doc.Content[0])
+	if root == nil || root.Kind != yaml.MappingNode {
 		return nil, fmt.Errorf("expected mapping at root")
 	}
-	servicesNode := findMapValue(root, "services")
+	servicesNode := yamlnode.Lookup(root, "services")
 	if servicesNode == nil {
 		return nil, nil
 	}
@@ -38,18 +39,17 @@ func Parse(content []byte) ([]ComposeImageRef, error) {
 		return nil, fmt.Errorf("services must be a mapping")
 	}
 	var refs []ComposeImageRef
-	for i := 0; i+1 < len(servicesNode.Content); i += 2 {
-		serviceKey := servicesNode.Content[i]
-		serviceVal := servicesNode.Content[i+1]
-		if serviceVal.Kind != yaml.MappingNode {
+	for _, service := range yamlnode.Entries(servicesNode) {
+		serviceVal := service.Value
+		if serviceVal == nil || serviceVal.Kind != yaml.MappingNode {
 			continue
 		}
-		serviceName := serviceKey.Value
-		imageNode := findMapValue(serviceVal, "image")
-		if imageNode == nil {
+		serviceName := service.Key
+		imageNode := yamlnode.Lookup(serviceVal, "image")
+		if imageNode == nil || imageNode.Kind != yaml.ScalarNode {
 			continue
 		}
-		hasBuild := findMapValue(serviceVal, "build") != nil
+		hasBuild := yamlnode.Lookup(serviceVal, "build") != nil
 		rawRef := imageNode.Value
 		ref := ComposeImageRef{
 			ServiceName: serviceName,
@@ -72,17 +72,28 @@ func Parse(content []byte) ([]ComposeImageRef, error) {
 		}
 		refs = append(refs, ref)
 	}
-	return refs, nil
+	return uniqueRefs(refs), nil
 }
 
-func findMapValue(node *yaml.Node, key string) *yaml.Node {
-	if node.Kind != yaml.MappingNode {
-		return nil
-	}
-	for i := 0; i+1 < len(node.Content); i += 2 {
-		if node.Content[i].Value == key {
-			return node.Content[i+1]
+// uniqueRefs keeps one reference for each position in the file.
+// Services that share an image through an anchor reach the same text, which
+// must be reported and rewritten once. It is skipped only when every service
+// reaching it skips it.
+func uniqueRefs(refs []ComposeImageRef) []ComposeImageRef {
+	type position struct{ line, column int }
+	index := map[position]int{}
+	var unique []ComposeImageRef
+	for _, ref := range refs {
+		pos := position{ref.Line, ref.Column}
+		i, found := index[pos]
+		if !found {
+			index[pos] = len(unique)
+			unique = append(unique, ref)
+			continue
+		}
+		if unique[i].Skip && !ref.Skip {
+			unique[i] = ref
 		}
 	}
-	return nil
+	return unique
 }

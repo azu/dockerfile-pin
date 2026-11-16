@@ -362,6 +362,22 @@ so such a reference is reported as skipped rather than pinned. `FROM` does expan
 | `image: node:20@sha256:...` | Skipped (use `--update`) |
 | Service with `build:` directive | Skipped |
 | Service without `image:` key | Skipped |
+| `image:` reached through a YAML anchor, alias, or merge key (`<<: *template`) | Yes |
+
+An image written in a shared template is pinned where it is written, and `check` reports that line once, however many services use the template:
+
+```yaml
+x-alpine: &alpine
+  image: alpine:latest # pinned and reported here
+
+services:
+  bash:
+    <<: *alpine
+  sh:
+    <<: *alpine
+```
+
+Anchors, aliases, and merge keys are followed the same way in GitHub Actions and GitLab CI files.
 
 ### GitHub Actions workflow files (`.github/workflows/*.yml`)
 

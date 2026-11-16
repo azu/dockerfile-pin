@@ -112,3 +112,37 @@ func TestRewriteCompose_FlowMappingRealDigestLengths(t *testing.T) {
 		t.Errorf("got:\n%s\nwant:\n%s", got, want)
 	}
 }
+
+func TestRewriteCompose_SharedAnchorTemplatePinnedOnce(t *testing.T) {
+	input := "x-alpine: &alpine\n  image: alpine:latest\nservices:\n  a:\n    <<: *alpine\n  b:\n    <<: *alpine\n"
+	refs, err := Parse([]byte(input))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	digests := map[int]string{}
+	for i := range refs {
+		digests[i] = "sha256:aaa111"
+	}
+	got := RewriteFile(input, refs, digests)
+	want := "x-alpine: &alpine\n  image: alpine:latest@sha256:aaa111\nservices:\n  a:\n    <<: *alpine\n  b:\n    <<: *alpine\n"
+	if got != want {
+		t.Errorf("RewriteFile() =\n%s\nwant\n%s", got, want)
+	}
+}
+
+func TestRewriteCompose_AnchoredScalarKeepsAnchor(t *testing.T) {
+	input := "x-image: &img alpine:3.20\nservices:\n  a:\n    image: *img\n  b:\n    image: *img\n"
+	refs, err := Parse([]byte(input))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	digests := map[int]string{}
+	for i := range refs {
+		digests[i] = "sha256:aaa111"
+	}
+	got := RewriteFile(input, refs, digests)
+	want := "x-image: &img alpine:3.20@sha256:aaa111\nservices:\n  a:\n    image: *img\n  b:\n    image: *img\n"
+	if got != want {
+		t.Errorf("RewriteFile() =\n%s\nwant\n%s", got, want)
+	}
+}

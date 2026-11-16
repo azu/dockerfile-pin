@@ -296,3 +296,20 @@ func TestRewriteFile_FlowMappingRealDigestLengths(t *testing.T) {
 		t.Errorf("got:\n%s\nwant:\n%s", result, want)
 	}
 }
+
+func TestRewriteFile_AnchoredContainerPinnedOnce(t *testing.T) {
+	input := "on: push\njobs:\n  a:\n    container: &ctr\n      image: node:20\n  b:\n    container: *ctr\n"
+	refs, err := Parse([]byte(input))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	digests := map[int]string{}
+	for i := range refs {
+		digests[i] = "sha256:aaa111"
+	}
+	got := RewriteFile(input, refs, digests)
+	want := "on: push\njobs:\n  a:\n    container: &ctr\n      image: node:20@sha256:aaa111\n  b:\n    container: *ctr\n"
+	if got != want {
+		t.Errorf("RewriteFile() =\n%s\nwant\n%s", got, want)
+	}
+}

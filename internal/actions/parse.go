@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/azu/dockerfile-pin/internal/yamlnode"
 	"gopkg.in/yaml.v3"
 )
 
@@ -29,16 +30,17 @@ func Parse(content []byte) ([]ActionsImageRef, error) {
 	if doc.Kind != yaml.DocumentNode || len(doc.Content) == 0 {
 		return nil, nil
 	}
-	root := doc.Content[0]
-	if root.Kind != yaml.MappingNode {
+	root := yamlnode.Resolve(doc.Content[0])
+	if root == nil || root.Kind != yaml.MappingNode {
 		return nil, nil
 	}
 
 	// Detect file type by top-level keys
-	if jobsNode := findMapValue(root, "jobs"); jobsNode != nil {
-		return parseWorkflow(jobsNode)
+	if jobsNode := yamlnode.Lookup(root, "jobs"); jobsNode != nil {
+		refs, err := parseWorkflow(jobsNode)
+		return uniqueRefs(refs), err
 	}
-	if runsNode := findMapValue(root, "runs"); runsNode != nil {
+	if runsNode := yamlnode.Lookup(root, "runs"); runsNode != nil {
 		return parseAction(runsNode)
 	}
 	return nil, nil
@@ -50,46 +52,45 @@ func parseWorkflow(jobsNode *yaml.Node) ([]ActionsImageRef, error) {
 	}
 
 	var refs []ActionsImageRef
-	for i := 0; i+1 < len(jobsNode.Content); i += 2 {
-		jobKey := jobsNode.Content[i]
-		jobVal := jobsNode.Content[i+1]
-		if jobVal.Kind != yaml.MappingNode {
+	for _, job := range yamlnode.Entries(jobsNode) {
+		jobVal := job.Value
+		if jobVal == nil || jobVal.Kind != yaml.MappingNode {
 			continue
 		}
-		jobName := jobKey.Value
+		jobName := job.Key
 
 		// container.image or container as string
-		containerNode := findMapValue(jobVal, "container")
+		containerNode := yamlnode.Lookup(jobVal, "container")
 		if containerNode != nil {
 			refs = append(refs, parseContainer(containerNode, "jobs."+jobName+".container")...)
 		}
 
 		// services.<id>.image
-		servicesNode := findMapValue(jobVal, "services")
+		servicesNode := yamlnode.Lookup(jobVal, "services")
 		if servicesNode != nil && servicesNode.Kind == yaml.MappingNode {
-			for j := 0; j+1 < len(servicesNode.Content); j += 2 {
-				svcKey := servicesNode.Content[j]
-				svcVal := servicesNode.Content[j+1]
-				if svcVal.Kind != yaml.MappingNode {
+			for _, svc := range yamlnode.Entries(servicesNode) {
+				svcVal := svc.Value
+				if svcVal == nil || svcVal.Kind != yaml.MappingNode {
 					continue
 				}
-				imageNode := findMapValue(svcVal, "image")
+				imageNode := yamlnode.Lookup(svcVal, "image")
 				if imageNode != nil && imageNode.Kind == yaml.ScalarNode && imageNode.Value != "" {
 					ref := makeRef(imageNode.Value, imageNode.Line, imageNode.Column,
-						"jobs."+jobName+".services."+svcKey.Value+".image")
+						"jobs."+jobName+".services."+svc.Key+".image")
 					refs = append(refs, ref)
 				}
 			}
 		}
 
 		// steps[*].uses with docker:// prefix
-		stepsNode := findMapValue(jobVal, "steps")
+		stepsNode := yamlnode.Lookup(jobVal, "steps")
 		if stepsNode != nil && stepsNode.Kind == yaml.SequenceNode {
 			for _, step := range stepsNode.Content {
-				if step.Kind != yaml.MappingNode {
+				step = yamlnode.Resolve(step)
+				if step == nil || step.Kind != yaml.MappingNode {
 					continue
 				}
-				usesNode := findMapValue(step, "uses")
+				usesNode := yamlnode.Lookup(step, "uses")
 				if usesNode == nil || usesNode.Kind != yaml.ScalarNode {
 					continue
 				}
@@ -114,7 +115,7 @@ func parseContainer(node *yaml.Node, location string) []ActionsImageRef {
 		ref := makeRef(node.Value, node.Line, node.Column, location)
 		return []ActionsImageRef{ref}
 	case yaml.MappingNode:
-		imageNode := findMapValue(node, "image")
+		imageNode := yamlnode.Lookup(node, "image")
 		if imageNode == nil || imageNode.Kind != yaml.ScalarNode || imageNode.Value == "" {
 			return nil
 		}
@@ -128,7 +129,7 @@ func parseAction(runsNode *yaml.Node) ([]ActionsImageRef, error) {
 	if runsNode.Kind != yaml.MappingNode {
 		return nil, nil
 	}
-	imageNode := findMapValue(runsNode, "image")
+	imageNode := yamlnode.Lookup(runsNode, "image")
 	if imageNode == nil || imageNode.Kind != yaml.ScalarNode {
 		return nil, nil
 	}
@@ -177,14 +178,20 @@ func makeRef(rawValue string, line int, column int, location string) ActionsImag
 	return ref
 }
 
-func findMapValue(node *yaml.Node, key string) *yaml.Node {
-	if node.Kind != yaml.MappingNode {
-		return nil
-	}
-	for i := 0; i+1 < len(node.Content); i += 2 {
-		if node.Content[i].Value == key {
-			return node.Content[i+1]
+// uniqueRefs keeps one reference for each position in the file.
+// Jobs that share an image through an anchor reach the same text, which must
+// be reported and rewritten once.
+func uniqueRefs(refs []ActionsImageRef) []ActionsImageRef {
+	type position struct{ line, column int }
+	seen := map[position]bool{}
+	var unique []ActionsImageRef
+	for _, ref := range refs {
+		pos := position{ref.Line, ref.Column}
+		if seen[pos] {
+			continue
 		}
+		seen[pos] = true
+		unique = append(unique, ref)
 	}
-	return nil
+	return unique
 }

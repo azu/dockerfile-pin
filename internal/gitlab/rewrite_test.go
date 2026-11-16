@@ -278,3 +278,20 @@ func TestRewriteFile_FlowSequenceRealDigestLengths(t *testing.T) {
 		t.Errorf("got:\n%s\nwant:\n%s", result, want)
 	}
 }
+
+func TestRewriteFile_HiddenJobTemplatePinnedOnce(t *testing.T) {
+	input := ".base: &base\n  image: ruby:3.3\n\ntest:\n  <<: *base\n\nlint:\n  <<: *base\n"
+	refs, err := Parse([]byte(input))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	digests := map[int]string{}
+	for i := range refs {
+		digests[i] = "sha256:aaa111"
+	}
+	got := RewriteFile(input, refs, digests)
+	want := ".base: &base\n  image: ruby:3.3@sha256:aaa111\n\ntest:\n  <<: *base\n\nlint:\n  <<: *base\n"
+	if got != want {
+		t.Errorf("RewriteFile() =\n%s\nwant\n%s", got, want)
+	}
+}

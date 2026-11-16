@@ -420,3 +420,45 @@ jobs:
 		}
 	}
 }
+
+func TestParse_AnchoredContainerSharedByJobs(t *testing.T) {
+	input := []byte("on: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n    container: &ctr\n      image: node:20\n    steps: []\n  b:\n    runs-on: ubuntu-latest\n    container: *ctr\n    steps: []\n")
+	refs, err := Parse(input)
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if len(refs) != 1 {
+		t.Fatalf("expected 1 ref, got %d: %+v", len(refs), refs)
+	}
+	if refs[0].ImageRef != "node:20" || refs[0].Line != 6 || refs[0].Location != "jobs.a.container.image" {
+		t.Errorf("ref = %+v", refs[0])
+	}
+}
+
+func TestParse_AliasedStepsAndServices(t *testing.T) {
+	input := []byte("on: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n    services: &svcs\n      db:\n        image: postgres:16\n    steps: &steps\n      - uses: docker://alpine:3.20\n  b:\n    runs-on: ubuntu-latest\n    services: *svcs\n    steps: *steps\n")
+	refs, err := Parse(input)
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if len(refs) != 2 {
+		t.Fatalf("expected 2 refs, got %d: %+v", len(refs), refs)
+	}
+	if refs[0].ImageRef != "postgres:16" || refs[0].Line != 7 {
+		t.Errorf("[0] = %+v", refs[0])
+	}
+	if refs[1].ImageRef != "alpine:3.20" || !refs[1].HasPrefix || refs[1].Line != 9 {
+		t.Errorf("[1] = %+v", refs[1])
+	}
+}
+
+func TestParse_MergeKeyInJob(t *testing.T) {
+	input := []byte("x-base: &base\n  runs-on: ubuntu-latest\n  container:\n    image: node:20\njobs:\n  a:\n    <<: *base\n    steps: []\n")
+	refs, err := Parse(input)
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if len(refs) != 1 || refs[0].ImageRef != "node:20" || refs[0].Line != 4 {
+		t.Fatalf("refs = %+v, want node:20 at line 4", refs)
+	}
+}
