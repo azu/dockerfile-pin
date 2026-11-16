@@ -108,6 +108,12 @@ Scenario: When `from=` names a stage, `scratch`, or contains a variable, it is s
 - When: The developer runs `dockerfile-pin check`.
 - Then: They are reported as `SKIP` with `stage reference`, `scratch image`, and `unexpanded variable in RUN --mount from`.
 
+Scenario: When a mount is written in a form that is not supported, it is skipped and left unchanged
+
+- Given: A Dockerfile has `RUN --mount=type=bind,from="nginx:1.27",target=/mnt true`, where the value is quoted.
+- When: The developer runs `dockerfile-pin check` and then `dockerfile-pin run --write`.
+- Then: `check` reports the reference as `SKIP` with `unsupported RUN --mount syntax`, and `run` leaves the line unchanged.
+
 Scenario: When a mount has no `from=`, it yields no reference
 
 - Given: A Dockerfile has `RUN --mount=type=cache,target=/root/.cache make`.
@@ -169,6 +175,9 @@ A value containing `$` is not expanded, because BuildKit rejects a variable ther
 A name is a stage reference when a stage with that name is declared anywhere in the file. An integer is not a stage index here, unlike `COPY --from=`: BuildKit looks the value up among stage names only, so `from=0` is read as an image named `0`.
 For `ONBUILD RUN`, the stage names of this file do not apply, as with `ONBUILD COPY`.
 
+Only one written form is pinned: the flag is written without quotes or escape characters, its options are separated by commas, and it has exactly one `from` option.
+Any other form that BuildKit accepts, such as a quoted value, a quoted option list, or a repeated `from`, is read so that `check` can show it, but it is skipped and never rewritten.
+
 ##### Digests and stages
 
 A reference that contains `@` already has a digest: the image is the text before the last `@` and the digest is the text after it.
@@ -191,6 +200,7 @@ A `# escape=` parser directive changes the line-continuation character, and it i
 | A `FROM` variable without a default | `unresolved ARG variable` |
 | A variable in `COPY --from=` | `unexpanded variable in COPY --from` |
 | A variable in `RUN --mount=...,from=` | `unexpanded variable in RUN --mount from` |
+| A `RUN --mount` written with quotes, escape characters, or more than one `from` | `unsupported RUN --mount syntax` |
 
 Skipped references are reported by `check` and left unchanged by `run`.
 
@@ -209,7 +219,7 @@ A file the Dockerfile parser rejects is reported as an error naming the file, an
 #### Applicable conditions
 
 An existing digest is replaced. For `COPY`, only the text after `--from=` is changed, so the same text elsewhere on the line stays as written.
-For `RUN --mount`, only the text after `from=` inside that mount flag is changed, so the same text in another option, another mount, or the command stays as written. A value written in quotes keeps its quotes.
+For `RUN --mount`, only the text after `from=` inside that mount flag is changed, so the same text in another option, another mount, or the command stays as written.
 Variables stay as written: `FROM image:${VERSION}` becomes `FROM image:${VERSION}@<digest>`.
 All other text, including comments, continuations, and other lines, is unchanged.
 
@@ -234,6 +244,8 @@ None. Contacting registries belongs to Pinning and Checking.
 ## Security considerations
 
 A reference that the build would read differently from dockerfile-pin must not be reported as pinned. The skip rules follow how BuildKit reads `FROM`, `COPY --from`, and `RUN --mount`, so that `check` does not report `OK` for a line that pulls an unpinned image.
+
+A digest must never be written at the wrong place. The reader decides which written forms are supported, and for every other form nothing is rewritten; a form is added to the supported ones only when it is needed.
 
 ## Open questions
 

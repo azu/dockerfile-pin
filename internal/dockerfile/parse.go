@@ -34,6 +34,7 @@ const (
 	SkipUnresolvedARG = "unresolved ARG variable"
 	SkipCopyFromVar   = "unexpanded variable in COPY --from"
 	SkipMountFromVar  = "unexpanded variable in RUN --mount from"
+	SkipMountSyntax   = "unsupported RUN --mount syntax"
 )
 
 // FromInstruction represents a pinnable image reference in a Dockerfile: a FROM
@@ -257,8 +258,13 @@ func parseCopyFromNode(node *parser.Node, stageNames map[string]bool) (FromInstr
 // parseRunMountNode returns one FromInstruction for each --mount flag of a RUN node
 // that names a source with from=. A mount without from= reads the build context or
 // nothing at all, so it has nothing to pin.
+//
+// Reading and writing are kept apart: this function decides whether a reference is
+// written in the one form the rewriter handles, and marks every other form as
+// skipped. The rewriter then never has to guess where a reference is.
 func parseRunMountNode(node *parser.Node, stageNames map[string]bool) []FromInstruction {
 	var instructions []FromInstruction
+	written := plainMountFlags(node.Original)
 	mountIndex := -1
 	for _, flag := range node.Flags {
 		value, ok := strings.CutPrefix(flag, mountFlag)
@@ -295,14 +301,19 @@ func parseRunMountNode(node *parser.Node, stageNames map[string]bool) []FromInst
 		// Unlike COPY --from, a number is not a stage index here: BuildKit looks the
 		// value up among stage names only, and otherwise pulls it as an image.
 		inst.ImageRef, inst.Digest, inst.SkipReason, inst.Skip = classifyRef(fromValue, stageNames)
+
+		if !inst.Skip && !(mountIndex < len(written) && written[mountIndex] == flag && isPlainMount(value, fromValue)) {
+			inst.Skip = true
+			inst.SkipReason = SkipMountSyntax
+		}
 		instructions = append(instructions, inst)
 	}
 	return instructions
 }
 
-// mountFromOption returns the from option of a --mount flag value. The value is a
-// comma-separated list of key=value options; when from is repeated the last one
-// wins, as in BuildKit.
+// mountFromOption returns the from option of a --mount flag value, the way BuildKit
+// reads it: the value is one CSV record of key=value options, the key is compared
+// without regard to case, and when from is repeated the last one wins.
 func mountFromOption(mount string) (value string, found bool) {
 	reader := csv.NewReader(strings.NewReader(mount))
 	reader.LazyQuotes = true
@@ -317,6 +328,85 @@ func mountFromOption(mount string) (value string, found bool) {
 		}
 	}
 	return value, found
+}
+
+// isPlainMount reports whether a --mount value is written in the supported form:
+// options separated by commas with no CSV quoting, and exactly one from option,
+// whose value is fromValue.
+func isPlainMount(mount, fromValue string) bool {
+	if strings.ContainsRune(mount, '"') {
+		return false
+	}
+	_, ok := plainFromOffset(mount, fromValue)
+	return ok
+}
+
+// plainFromOffset returns where the value of the only from option starts in a
+// --mount value split at every comma. It fails when there is no from option, more
+// than one, or its value is not want.
+func plainFromOffset(mount, want string) (int, bool) {
+	found, at := 0, 0
+	offset := 0
+	for _, field := range strings.Split(mount, ",") {
+		if key, value, ok := strings.Cut(field, "="); ok && strings.ToLower(key) == mountFromKey {
+			found++
+			if value == want {
+				at = offset + len(key) + 1
+			} else {
+				return 0, false
+			}
+		}
+		offset += len(field) + 1
+	}
+	return at, found == 1
+}
+
+// plainMountFlags returns the --mount flags of a RUN (or ONBUILD RUN) instruction as
+// they are written, reading the text as words separated by spaces or tabs with no
+// regard to quotes. Flags are the words between the instruction name and the first
+// word that does not start with "--".
+//
+// A flag written with quotes or escapes comes out different from the one the
+// Dockerfile parser returns, which is how such a flag is recognised as unsupported.
+func plainMountFlags(instruction string) []string {
+	var flags []string
+	for _, span := range plainMountFlagSpans(instruction) {
+		flags = append(flags, instruction[span[0]:span[1]])
+	}
+	return flags
+}
+
+// plainMountFlagSpans returns the [start, end) byte ranges of those flags.
+func plainMountFlagSpans(instruction string) [][2]int {
+	var spans [][2]int
+	word := 0 // index of the current word
+	skip := 1 // words that name the instruction
+	for i := 0; i < len(instruction); {
+		for i < len(instruction) && (instruction[i] == ' ' || instruction[i] == '\t') {
+			i++
+		}
+		start := i
+		for i < len(instruction) && instruction[i] != ' ' && instruction[i] != '\t' {
+			i++
+		}
+		if start == i {
+			break
+		}
+		text := instruction[start:i]
+		if word == 0 && strings.EqualFold(text, "onbuild") {
+			skip = 2
+		}
+		if word >= skip {
+			if !strings.HasPrefix(text, "--") {
+				break
+			}
+			if strings.HasPrefix(text, mountFlag) {
+				spans = append(spans, [2]int{start, i})
+			}
+		}
+		word++
+	}
+	return spans
 }
 
 // copyFromValue returns the value of the --from= flag among a COPY node's flags.

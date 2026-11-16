@@ -108,6 +108,12 @@ Dockerfileを管理する開発者として、`run`で`FROM`にdigestを付け�
 - 操作: 開発者が`dockerfile-pin check`を実行する。
 - 結果: それぞれ`SKIP`として、`stage reference`、`scratch image`、`unexpanded variable in RUN --mount from`の理由で報告される。
 
+シナリオ: マウントが対応していない書き方のとき、スキップして変えない
+
+- 前提: Dockerfileに、値を引用符で囲んだ`RUN --mount=type=bind,from="nginx:1.27",target=/mnt true`がある。
+- 操作: 開発者が`dockerfile-pin check`を実行し、続けて`dockerfile-pin run --write`を実行する。
+- 結果: `check`はその参照を`SKIP`として`unsupported RUN --mount syntax`の理由で報告し、`run`はその行を変えない。
+
 シナリオ: マウントに`from=`がないとき、参照にならない
 
 - 前提: Dockerfileに`RUN --mount=type=cache,target=/root/.cache make`がある。
@@ -169,6 +175,9 @@ Dockerfileを管理する開発者として、`run`で`FROM`にdigestを付け�
 その名前のステージがファイルのどこかで宣言されていれば、名前はステージ参照です。`COPY --from=`と違い、整数はステージの番号ではありません。BuildKitはこの値をステージ名の中からだけ探すので、`from=0`は`0`という名前のイメージとして読みます。
 `ONBUILD RUN`には、`ONBUILD COPY`と同じく、このファイルのステージ名を当てはめません。
 
+pinするのは1つの書き方だけです。フラグが引用符もescapeの文字も使わずに書かれ、オプションがカンマで区切られ、`from`オプションがちょうど1つあるものです。
+値を引用符で囲む、オプションの並びを引用符で囲む、`from`を繰り返すなど、BuildKitが受け付けるほかの書き方は、`check`が表示できるように読み取りますが、スキップし、書き換えません。
+
 ##### digestとステージ
 
 `@`を含む参照は、すでにdigestを持っています。最後の`@`より前がイメージで、後ろがdigestです。
@@ -191,6 +200,7 @@ digest付きの参照は、ステージ参照にはなりません。digestを�
 | 既定値のない`FROM`の変数 | `unresolved ARG variable` |
 | `COPY --from=`の変数 | `unexpanded variable in COPY --from` |
 | `RUN --mount=...,from=`の変数 | `unexpanded variable in RUN --mount from` |
+| 引用符、escapeの文字、2つ以上の`from`を使って書かれた`RUN --mount` | `unsupported RUN --mount syntax` |
 
 スキップした参照は`check`が報告し、`run`は変えません。
 
@@ -209,7 +219,7 @@ Dockerfileのパーサーが受け付けないファイルは、ファイル名�
 #### 適用条件
 
 既存のdigestは置き換えます。`COPY`では`--from=`の後ろの文字列だけを変えるので、同じ行のほかの場所にある同じ文字列は書かれたままです。
-`RUN --mount`では、そのマウントのフラグの中の`from=`の後ろの文字列だけを変えるので、ほかのオプション、ほかのマウント、コマンドにある同じ文字列は書かれたままです。引用符で囲んだ値は引用符を残します。
+`RUN --mount`では、そのマウントのフラグの中の`from=`の後ろの文字列だけを変えるので、ほかのオプション、ほかのマウント、コマンドにある同じ文字列は書かれたままです。
 変数は書かれたまま残します。`FROM image:${VERSION}`は`FROM image:${VERSION}@<digest>`になります。
 コメント、行継続、ほかの行を含め、それ以外の文字列は変えません。
 
@@ -234,6 +244,8 @@ Dockerfileのパーサーが受け付けないファイルは、ファイル名�
 ## セキュリティ上の考慮事項
 
 ビルドがdockerfile-pinとは違う読み方をする参照を、pin済みとして報告してはいけません。スキップの規則はBuildKitが`FROM`、`COPY --from`、`RUN --mount`を読む方法に合わせてあり、pinしていないイメージをpullする行を`check`が`OK`と報告しないようにしています。
+
+digestを誤った場所に書いてはいけません。どの書き方に対応するかは読み取りが決め、それ以外の書き方では何も書き換えません。対応する書き方は、必要になったものだけを足します。
 
 ## 未決事項
 

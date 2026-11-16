@@ -654,9 +654,32 @@ func TestParse_RunMountFrom(t *testing.T) {
 			want:  []wantInst{{imageRef: "nginx:1.27", rawRef: "nginx:1.27"}},
 		},
 		{
-			name:  "quoted value",
+			name:  "quoted value is not a supported form",
 			input: "FROM a\nRUN --mount=type=bind,from=\"nginx:1.27\",target=/b true\n",
-			want:  []wantInst{{imageRef: "nginx:1.27", rawRef: "nginx:1.27"}},
+			want:  []wantInst{{imageRef: "nginx:1.27", rawRef: "nginx:1.27", skip: true, skipReason: SkipMountSyntax}},
+		},
+		{
+			name:  "quoted option list is not a supported form",
+			input: "FROM a\nRUN --mount='type=bind,from=nginx:1.27,target=/b' true\n",
+			want:  []wantInst{{imageRef: "nginx:1.27", rawRef: "nginx:1.27", skip: true, skipReason: SkipMountSyntax}},
+		},
+		{
+			name:  "repeated from is not a supported form",
+			input: "FROM a\nRUN --mount=from=busybox:1,from=nginx:1.27,target=/b true\n",
+			want:  []wantInst{{imageRef: "nginx:1.27", rawRef: "nginx:1.27", skip: true, skipReason: SkipMountSyntax}},
+		},
+		{
+			name:  "quoted flag before a plain one skips only the quoted one",
+			input: "FROM a\nRUN --mount=type=bind,source=\"/p q\",from=nginx:1.27,target=/a --mount=from=busybox:1,target=/b true\n",
+			want: []wantInst{
+				{imageRef: "nginx:1.27", rawRef: "nginx:1.27", skip: true, skipReason: SkipMountSyntax},
+				{imageRef: "busybox:1", rawRef: "busybox:1", mountIndex: 1, skip: true, skipReason: SkipMountSyntax},
+			},
+		},
+		{
+			name:  "stage in a quoted value is still a stage reference",
+			input: "FROM a AS builder\nRUN --mount=from=\"builder\",target=/b true\n",
+			want:  []wantInst{{imageRef: "builder", rawRef: "builder", skip: true, skipReason: SkipStageRef}},
 		},
 		{
 			name:  "text in the command is not a flag",

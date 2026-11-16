@@ -81,9 +81,9 @@ func targetOf(inst FromInstruction) target {
 
 // find returns where the reference itself starts in the instruction text, or -1
 // when it is not written there.
-func (t target) find(logical string, escape byte) int {
+func (t target) find(logical string) int {
 	if t.mountIndex >= 0 {
-		return findMountFrom(logical, t.mountIndex, t.rawRef, escape)
+		return findMountFrom(logical, t.mountIndex, t.rawRef)
 	}
 	idx := strings.Index(logical, t.prefix+t.rawRef)
 	if idx < 0 {
@@ -93,133 +93,23 @@ func (t target) find(logical string, escape byte) int {
 }
 
 // findMountFrom returns where the value of the from option starts inside the n-th
-// (0-based) --mount flag of a RUN, or -1 when that value is not rawRef.
+// (0-based) --mount flag of a RUN, or -1 when the flag is not written in the
+// supported form: options separated by commas, with exactly one from option whose
+// value is rawRef.
 //
-// The flag and the option are located by reading the text the way BuildKit does,
-// rather than by searching for "from=<ref>": the same text can appear in another
-// option such as source=, and when from is repeated only the last one is used, so
-// a search could pin text the build never reads and leave the real one unpinned.
-func findMountFrom(logical string, n int, rawRef string, escape byte) int {
-	spans := mountFlagSpans(logical, escape)
+// The reader marks every other form as skipped, so this is only a second check:
+// when the text is not what was read, nothing is rewritten.
+func findMountFrom(logical string, n int, rawRef string) int {
+	spans := plainMountFlagSpans(logical)
 	if n >= len(spans) {
 		return -1
 	}
-	// The options are read from the flag as the parser sees it, with quotes and
-	// escapes removed, because that is the text BuildKit splits at commas. Quotes
-	// may enclose the whole list, single options, or single values.
-	decoded, source := unquote(logical, spans[n][0]+len(mountFlag), spans[n][1], escape)
-
-	valueStart := -1
-	offset := 0
-	for _, field := range strings.Split(decoded, ",") {
-		// The last from wins.
-		if key, _, ok := strings.Cut(field, "="); ok && strings.ToLower(key) == mountFromKey {
-			valueStart = offset + len(key) + 1
-		}
-		offset += len(field) + 1
-	}
-	if valueStart < 0 || !strings.HasPrefix(decoded[valueStart:], rawRef) || rawRef == "" {
+	start := spans[n][0] + len(mountFlag)
+	offset, ok := plainFromOffset(logical[start:spans[n][1]], rawRef)
+	if !ok {
 		return -1
 	}
-	// The reference must also be written in one piece in the source, since the
-	// digest is spliced in right after it.
-	at := source[valueStart]
-	if !strings.HasPrefix(logical[at:], rawRef) {
-		return -1
-	}
-	return at
-}
-
-// unquote returns text[start:end] with quote characters and escape characters
-// removed, as the Dockerfile parser reads a flag, and for each byte of the result
-// the index in text it came from.
-func unquote(text string, start, end int, escape byte) (string, []int) {
-	var sb strings.Builder
-	source := make([]int, 0, end-start)
-	var quote byte
-	for i := start; i < end; i++ {
-		b := text[i]
-		switch {
-		case b == escape && quote != '\'' && i+1 < end:
-			i++
-			b = text[i]
-		case quote == 0 && (b == '"' || b == '\''):
-			quote = b
-			continue
-		case b == quote:
-			quote = 0
-			continue
-		}
-		sb.WriteByte(b)
-		source = append(source, i)
-	}
-	return sb.String(), source
-}
-
-// mountFlagSpans returns the [start, end) byte ranges of the --mount flags of a RUN
-// (or ONBUILD RUN) instruction, in order. Flags are the words between the
-// instruction name and the first word that does not start with "--"; a word may
-// hold spaces inside quotes, so "--mount=" inside a quoted value is not a flag.
-func mountFlagSpans(logical string, escape byte) [][2]int {
-	words := splitWords(logical, escape)
-	if len(words) == 0 {
-		return nil
-	}
-	first := 1
-	if strings.EqualFold(logical[words[0][0]:words[0][1]], "onbuild") {
-		first = 2
-	}
-	var spans [][2]int
-	for _, w := range words[min(first, len(words)):] {
-		text := logical[w[0]:w[1]]
-		if !strings.HasPrefix(text, "--") {
-			break
-		}
-		if strings.HasPrefix(text, mountFlag) {
-			spans = append(spans, w)
-		}
-	}
-	return spans
-}
-
-// splitWords returns the [start, end) ranges of the whitespace-separated words of
-// text, keeping quoted spaces and escaped characters inside a word.
-func splitWords(text string, escape byte) [][2]int {
-	return splitOutsideQuotes(text, 0, len(text), escape, func(b byte) bool { return b == ' ' || b == '\t' })
-}
-
-// splitOutsideQuotes splits text[start:end] at the bytes isSep accepts, ignoring
-// those inside single or double quotes or right after the escape character. Empty
-// pieces are dropped.
-func splitOutsideQuotes(text string, start, end int, escape byte, isSep func(byte) bool) [][2]int {
-	var pieces [][2]int
-	pieceStart := -1
-	var quote byte
-	for i := start; i < end; i++ {
-		b := text[i]
-		if quote == 0 && isSep(b) {
-			if pieceStart >= 0 {
-				pieces = append(pieces, [2]int{pieceStart, i})
-				pieceStart = -1
-			}
-			continue
-		}
-		if pieceStart < 0 {
-			pieceStart = i
-		}
-		switch {
-		case b == escape && quote != '\'' && i+1 < end:
-			i++
-		case quote == 0 && (b == '"' || b == '\''):
-			quote = b
-		case b == quote:
-			quote = 0
-		}
-	}
-	if pieceStart >= 0 {
-		pieces = append(pieces, [2]int{pieceStart, end})
-	}
-	return pieces
+	return start + offset
 }
 
 // rewriteSpan pins the reference inside the lines an instruction covers, editing lines
@@ -235,7 +125,7 @@ func rewriteSpan(lines []string, first, last int, t target, digest string, escap
 		return false
 	}
 	logical, origin := joinContinued(lines, first, last, escape)
-	refStart := t.find(logical, escape)
+	refStart := t.find(logical)
 	if refStart < 0 {
 		return false
 	}

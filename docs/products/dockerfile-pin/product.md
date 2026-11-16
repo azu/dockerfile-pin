@@ -76,6 +76,7 @@ Every image reference in the repositories that use dockerfile-pin carries a dige
 ## Development principles
 
 - Keep the tool simple: it adds digests and checks them, like pinact does for GitHub Actions.
+- Keep reading and writing apart: the reader decides which written forms are supported, and every other form is left untouched. A form is added when it is needed, rather than following every form a file format allows.
 - Leave ongoing digest updates to Renovate. dockerfile-pin does the first pinning and the CI check, and `run --update` is a manual re-resolve rather than an update service.
 - Build on maintained libraries, such as Google's go-containerregistry (crane), instead of stalled ones.
 - Make the tool itself safe to install in CI: releases are published with checksums for installers such as aqua, and GitHub Releases immutability is enabled.

@@ -512,30 +512,9 @@ func TestRewriteFile_RunMountFrom(t *testing.T) {
 			want:  "FROM scratch\nRUN --mount=type=bind,source=nginx:1.27,from=nginx:1.27@" + d + ",target=/a echo from=nginx:1.27\n",
 		},
 		{
-			name:  "mounts on continued lines",
-			input: "FROM scratch\nRUN --mount=type=cache,target=/c \\\n    --mount=type=bind,from=nginx:1.27,target=/a \\\n    --mount=type=bind,from=busybox:1,target=/b \\\n    true\n",
-			want:  "FROM scratch\nRUN --mount=type=cache,target=/c \\\n    --mount=type=bind,from=nginx:1.27@" + d + ",target=/a \\\n    --mount=type=bind,from=busybox:1@" + d + ",target=/b \\\n    true\n",
-		},
-		{
-			name:  "quoted value and upper case key",
-			input: "FROM scratch\nRUN --mount=type=bind,FROM=\"nginx:1.27\",target=/a true\n",
-			want:  "FROM scratch\nRUN --mount=type=bind,FROM=\"nginx:1.27@" + d + "\",target=/a true\n",
-		},
-		{
-			// BuildKit uses the last from, so that is the one to pin.
-			name:  "repeated from pins the last one",
-			input: "FROM scratch\nRUN --mount=from=nginx:1.27,from=nginx:1.27,target=/a true\n",
-			want:  "FROM scratch\nRUN --mount=from=nginx:1.27,from=nginx:1.27@" + d + ",target=/a true\n",
-		},
-		{
 			name:  "source path that looks like the option stays",
 			input: "FROM scratch\nRUN --mount=type=bind,source=from=nginx:1.27,from=nginx:1.27,target=/a true\n",
 			want:  "FROM scratch\nRUN --mount=type=bind,source=from=nginx:1.27,from=nginx:1.27@" + d + ",target=/a true\n",
-		},
-		{
-			name:  "quoted value that looks like another flag",
-			input: "FROM scratch\nRUN --mount=type=bind,source=\"/path --mount=other\",from=nginx:1.27,target=/a --mount=from=busybox:1,target=/b true\n",
-			want:  "FROM scratch\nRUN --mount=type=bind,source=\"/path --mount=other\",from=nginx:1.27@" + d + ",target=/a --mount=from=busybox:1@" + d + ",target=/b true\n",
 		},
 		{
 			name:  "other flags between mounts",
@@ -543,29 +522,19 @@ func TestRewriteFile_RunMountFrom(t *testing.T) {
 			want:  "FROM scratch\nRUN --network=none --mount=from=nginx:1.27@" + d + ",target=/a --security=insecure --mount=from=busybox:1@" + d + ",target=/b true\n",
 		},
 		{
-			name:  "double-quoted option list",
-			input: "FROM scratch\nRUN --mount=\"type=bind,from=nginx:1.27,target=/mnt\" true\n",
-			want:  "FROM scratch\nRUN --mount=\"type=bind,from=nginx:1.27@" + d + ",target=/mnt\" true\n",
-		},
-		{
-			name:  "single-quoted option list with from last",
-			input: "FROM scratch\nRUN --mount='type=bind,target=/mnt,from=nginx:1.27' true\n",
-			want:  "FROM scratch\nRUN --mount='type=bind,target=/mnt,from=nginx:1.27@" + d + "' true\n",
-		},
-		{
-			name:  "individually quoted options",
-			input: "FROM scratch\nRUN --mount=\"type=bind\",from=nginx:1.27,target=\"/mnt\" true\n",
-			want:  "FROM scratch\nRUN --mount=\"type=bind\",from=nginx:1.27@" + d + ",target=\"/mnt\" true\n",
-		},
-		{
-			name:  "quoted option and quoted value together",
-			input: "FROM scratch\nRUN --mount=type=bind,'from=nginx:1.27',target=/a --mount=\"from\"=\"busybox:1\",target=/b true\n",
-			want:  "FROM scratch\nRUN --mount=type=bind,'from=nginx:1.27@" + d + "',target=/a --mount=\"from\"=\"busybox:1@" + d + "\",target=/b true\n",
+			name:  "mounts on continued lines",
+			input: "FROM scratch\nRUN --mount=type=cache,target=/c \\\n    --mount=type=bind,from=nginx:1.27,target=/a \\\n    --mount=type=bind,from=busybox:1,target=/b \\\n    true\n",
+			want:  "FROM scratch\nRUN --mount=type=cache,target=/c \\\n    --mount=type=bind,from=nginx:1.27@" + d + ",target=/a \\\n    --mount=type=bind,from=busybox:1@" + d + ",target=/b \\\n    true\n",
 		},
 		{
 			name:  "comment lines inside a continued RUN",
 			input: "FROM scratch\nRUN \\\n    # external configuration from=busybox:1\n    --mount=from=nginx:1.27,target=/a \\\n    # --mount=from=alpine:3,target=/c\n    --mount=from=busybox:1,target=/b \\\n    true\n",
 			want:  "FROM scratch\nRUN \\\n    # external configuration from=busybox:1\n    --mount=from=nginx:1.27@" + d + ",target=/a \\\n    # --mount=from=alpine:3,target=/c\n    --mount=from=busybox:1@" + d + ",target=/b \\\n    true\n",
+		},
+		{
+			name:  "upper case key",
+			input: "FROM scratch\nRUN --mount=type=bind,FROM=nginx:1.27,target=/a true\n",
+			want:  "FROM scratch\nRUN --mount=type=bind,FROM=nginx:1.27@" + d + ",target=/a true\n",
 		},
 		{
 			name:  "ONBUILD RUN",
@@ -596,5 +565,68 @@ func TestRewriteFile_RunMountFrom(t *testing.T) {
 				t.Errorf("unrewritten = %v, want none", unrewritten)
 			}
 		})
+	}
+}
+
+// TestRewriteFile_RunMountUnsupportedFormsUntouched covers the forms the reader does
+// not support. Each is skipped, so the file comes back byte for byte even when a
+// digest is offered for every reference.
+func TestRewriteFile_RunMountUnsupportedFormsUntouched(t *testing.T) {
+	inputs := map[string]string{
+		"quoted value":                  "FROM scratch\nRUN --mount=type=bind,from=\"nginx:1.27\",target=/a true\n",
+		"double-quoted option list":     "FROM scratch\nRUN --mount=\"type=bind,from=nginx:1.27,target=/mnt\" true\n",
+		"single-quoted option list":     "FROM scratch\nRUN --mount='type=bind,target=/mnt,from=nginx:1.27' true\n",
+		"individually quoted options":   "FROM scratch\nRUN --mount=\"type=bind\",from=nginx:1.27,target=\"/mnt\" true\n",
+		"quoted key and value":          "FROM scratch\nRUN --mount=\"from\"=\"busybox:1\",target=/b true\n",
+		"repeated from":                 "FROM scratch\nRUN --mount=from=nginx:1.27,from=nginx:1.27,target=/a true\n",
+		"quoted path with a flag in it": "FROM scratch\nRUN --mount=type=bind,source=\"/path --mount=other\",from=nginx:1.27,target=/a --mount=from=busybox:1,target=/b true\n",
+		"CSV quotes inside quotes":      "FROM scratch\nRUN --mount=from=nginx:1.27,'\"source=/a,from=nginx:1.27\"',target=/mnt true\n",
+		"CSV-quoted from option":        "FROM scratch\nRUN --mount='\"from=nginx:1.27\"',target=/mnt true\n",
+		"escaped character":             "FROM scratch\nRUN --mount=from=nginx\\:1.27,target=/mnt true\n",
+	}
+	for name, input := range inputs {
+		t.Run(name, func(t *testing.T) {
+			insts, err := Parse(strings.NewReader(input))
+			if err != nil {
+				t.Fatalf("Parse() error = %v", err)
+			}
+			digests := map[int]string{}
+			mounts := 0
+			for i, inst := range insts {
+				digests[i] = "sha256:aaa111"
+				if !inst.IsMountFrom {
+					continue
+				}
+				mounts++
+				if !inst.Skip || inst.SkipReason != SkipMountSyntax {
+					t.Errorf("[%d] %q: Skip = %v (%q), want skipped as %q", i, inst.RawRef, inst.Skip, inst.SkipReason, SkipMountSyntax)
+				}
+			}
+			if mounts == 0 {
+				t.Errorf("no mount reference was read, so the unpinned image would go unreported")
+			}
+			got, unrewritten := RewriteFileReport(input, insts, digests)
+			if got != input {
+				t.Errorf("RewriteFileReport() changed the file:\n%s", got)
+			}
+			if len(unrewritten) != 0 {
+				t.Errorf("unrewritten = %v, want none because skipped references are not attempted", unrewritten)
+			}
+		})
+	}
+}
+
+// TestRewriteFile_RunMountTextDiffersFromReference hands the rewriter a reference
+// that does not match the text, as a second check behind the reader: nothing is
+// written and the reference is reported back.
+func TestRewriteFile_RunMountTextDiffersFromReference(t *testing.T) {
+	input := "FROM scratch\nRUN --mount=from=nginx:1.27,from=busybox:1,target=/a true\n"
+	insts := []FromInstruction{{RawRef: "nginx:1.27", ImageRef: "nginx:1.27", StartLine: 2, EndLine: 2, IsMountFrom: true}}
+	got, unrewritten := RewriteFileReport(input, insts, map[int]string{0: "sha256:aaa111"})
+	if got != input {
+		t.Errorf("RewriteFileReport() changed the file:\n%s", got)
+	}
+	if len(unrewritten) != 1 || unrewritten[0] != 0 {
+		t.Errorf("unrewritten = %v, want [0]", unrewritten)
 	}
 }

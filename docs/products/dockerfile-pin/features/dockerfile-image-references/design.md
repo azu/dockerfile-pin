@@ -44,16 +44,17 @@ The same function rejects a `$` in `from` with `'from' doesn't support variable 
 It then classifies the value like `COPY --from` but without the stage index check: BuildKit calls only `findStateByName` for a mount source and otherwise builds a stage from the value as an image name ([convert_runmount.go](https://github.com/moby/buildkit/blob/v0.16.0/frontend/dockerfile/dockerfile2llb/convert_runmount.go)).
 Each reference records the position of its `--mount` flag among the instruction's `--mount` flags, which the rewriter needs.
 
+Reading and writing are kept apart. The reader decides whether a mount is written in the one supported form, and marks every other form as skipped with `unsupported RUN --mount syntax`, so the rewriter never has to interpret quoting.
+The reader splits the instruction text into words at spaces and tabs with no regard to quotes, takes the words between the instruction name and the first word that does not start with `--` as flags, and compares the flag at the same position with the one the parser returned. They differ exactly when the flag was written with quotes or escape characters, because the parser removes those.
+It also requires the value to hold no `"`, which would start CSV quoting, and to have exactly one `from` option when split at every comma.
+
 ### Rewriting
 
 The rewriter works on the file as lines and edits them in place.
 For each chosen reference it joins the lines the instruction spans the way the parser does, dropping the escape character and what follows it on continued lines and leaving out comment lines between them, and records for each byte of the joined text the line and column it came from.
 It searches the joined text for the reference, prefixed by `--from=` for `COPY`, then maps the position back to the lines: it removes the bytes of any existing digest and inserts `@<digest>` where the reference without digest ends.
-For `RUN --mount`, the reference is located by reading the text instead of searching for it.
-The rewriter splits the instruction into words, keeping quoted spaces inside a word, and takes the words between the instruction name and the first word that does not start with `--` as the flags; the `--mount=` flag with the recorded position is the one to change.
-It removes the quotes and escape characters from that flag as the parser does, remembering where each remaining byte came from, because that unquoted text is what BuildKit splits at commas; quotes may enclose the whole option list, one option, or one value.
-It takes the last option whose key is `from` without regard to case and writes the digest at the source position of its value.
-A search for `from=<reference>` would be wrong in three cases: two mounts that name the same image, where it finds the first one twice; a repeated `from`, where BuildKit uses the last one and the first would be pinned; and the same text inside another option such as `source=`.
+For `RUN --mount`, the rewriter repeats the reader's plain reading on the joined text: it takes the `--mount=` flag at the recorded position, splits it at every comma, and requires exactly one `from` option whose value is the reference. It writes the digest at that value.
+When the text is not in that form, it writes nothing and reports the reference as not found. A skipped reference never reaches this point, so this is a second check behind the reader.
 Searching the joined text is what makes a reference split by a continuation findable; searching each physical line would miss it and leave the file silently unchanged.
 
 When the reference is not found, the rewriter returns the reference's index in a list of unrewritten references, so `run` can warn and leave it out of its count.
@@ -103,6 +104,12 @@ BuildKit does not expand the value and the build fails, so a digest would be wri
 
 `instructions.Parse` would return each mount already parsed, with its `From` field.
 It validates the whole Dockerfile and fails on instructions it does not accept, and it gives no position inside the line for the rewriter, so the flags from the parser already in use are read instead.
+
+### Locating the reference in every form BuildKit accepts
+
+An earlier version of this change made the rewriter follow quotes around a value, an option, or the whole option list, CSV quoting inside those, and a repeated `from`.
+Each form needed its own handling of where the bytes are in the source, and each fix exposed another form; one of them wrote the digest into a `source=` path.
+Supporting one plain form and skipping the rest keeps the rule that a digest is never written at the wrong place, at the cost of leaving rare forms for the developer to pin by hand. It is not chosen; a form can be added when it is needed.
 
 ### Treating a number in `from=` as a stage index
 
