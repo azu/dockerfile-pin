@@ -61,13 +61,13 @@ Without a check in CI, a new reference without a digest can be merged unnoticed,
 
 | Feature | Description | Specification |
 | --- | --- | --- |
-| Dockerfile image references | Reads image references from `FROM` and `COPY --from=` and writes digests onto them | Not written |
+| Dockerfile image references | Reads image references from `FROM` and `COPY --from=` and writes digests onto them |[Requirements](features/dockerfile-image-references/requirements.md) |
 | YAML image references | Reads image references from compose files, GitHub Actions files, and GitLab CI files and writes digests onto them | [Requirements](features/yaml-image-references/requirements.md) |
-| Target file discovery | Finds target files from `-f`, `--glob`, or the default pattern and decides each file's kind | Not written |
-| Pinning | `run` resolves tags to digests and shows or writes the pinned files | Not written |
-| Digest updates | `run --update` re-resolves existing digests, and `--min-age` skips recently built images | Not written |
-| Checking | `check` reports missing digests, digests absent from the registry, and, with `--verify-tag`, tags that point elsewhere | Not written |
-| Ignore rules and configuration | Excludes images by pattern and reads settings from `.dockerfile-pin.yaml` | Not written |
+| Target file discovery | Finds target files from `-f`, `--glob`, or the default pattern and decides each file's kind |[Requirements](features/target-file-discovery/requirements.md) |
+| Pinning | `run` resolves tags to digests and shows or writes the pinned files |[Requirements](features/pinning/requirements.md) |
+| Digest updates | `run --update` re-resolves existing digests, and `--min-age` skips recently built images |[Requirements](features/digest-updates/requirements.md) |
+| Checking | `check` reports missing digests, digests absent from the registry, and, with `--verify-tag`, tags that point elsewhere |[Requirements](features/checking/requirements.md) |
+| Ignore rules and configuration | Excludes images by pattern and reads settings from `.dockerfile-pin.yaml` |[Requirements](features/ignore-and-configuration/requirements.md) |
 
 ## Definition of success
 

@@ -61,13 +61,13 @@ CIで検査しないと、digestのない新しい参照が気付かれずにマ
 
 | 機能 | 説明 | 仕様 |
 | --- | --- | --- |
-| Dockerfileのイメージ参照 | `FROM`と`COPY --from=`からイメージ参照を読み取り、digestを書き込む | 未作成 |
+| Dockerfileのイメージ参照 | `FROM`と`COPY --from=`からイメージ参照を読み取り、digestを書き込む |[Requirements](features/dockerfile-image-references/requirements.ja.md) |
 | YAMLのイメージ参照 | composeファイル、GitHub Actionsのファイル、GitLab CIのファイルからイメージ参照を読み取り、digestを書き込む | [Requirements](features/yaml-image-references/requirements.ja.md) |
-| 対象ファイルの探索 | `-f`、`--glob`、既定のパターンから対象ファイルを探し、各ファイルの種類を決める | 未作成 |
-| pin | `run`がタグをdigestに解決し、pinしたファイルを表示するか書き込む | 未作成 |
-| digestの更新 | `run --update`が既存のdigestを解決し直し、`--min-age`が最近ビルドされたイメージを飛ばす | 未作成 |
-| check | `check`がdigestのない参照、レジストリにないdigest、`--verify-tag`では別のdigestを指すタグを報告する | 未作成 |
-| 除外と設定 | パターンでイメージを除外し、`.dockerfile-pin.yaml`から設定を読む | 未作成 |
+| 対象ファイルの探索 | `-f`、`--glob`、既定のパターンから対象ファイルを探し、各ファイルの種類を決める |[Requirements](features/target-file-discovery/requirements.ja.md) |
+| pin | `run`がタグをdigestに解決し、pinしたファイルを表示するか書き込む |[Requirements](features/pinning/requirements.ja.md) |
+| digestの更新 | `run --update`が既存のdigestを解決し直し、`--min-age`が最近ビルドされたイメージを飛ばす |[Requirements](features/digest-updates/requirements.ja.md) |
+| check | `check`がdigestのない参照、レジストリにないdigest、`--verify-tag`では別のdigestを指すタグを報告する |[Requirements](features/checking/requirements.ja.md) |
+| 除外と設定 | パターンでイメージを除外し、`.dockerfile-pin.yaml`から設定を読む |[Requirements](features/ignore-and-configuration/requirements.ja.md) |
 
 ## 成功の定義
 
