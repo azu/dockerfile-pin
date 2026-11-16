@@ -12,27 +12,41 @@ dockerfile-pinは、Dockerfile、composeファイル、GitHub Actionsのファ�
 
 ### 背景
 
-未確認です。未決事項を参照してください。
+`node:20`のようなDockerイメージのタグは書き換えられます。同じタグに、別の内容を後からpushできます（[Docker Community Forums](https://forums.docker.com/t/can-a-docker-hub-tag-have-its-content-changed/139358)）。
+悪意のある第三者がレジストリへのアクセスを得ると、既存のタグに改ざんしたイメージをpushでき、タグだけを指定したビルドはそれをpullします。
+[Trivyへの攻撃](https://www.aquasec.com/blog/trivy-supply-chain-attack-what-you-need-to-know/)のようなサプライチェーン攻撃は、イメージを公開するレジストリやパイプラインが現実に狙われることを示しています。
+Docker Hubには[Immutable tags](https://docs.docker.com/docker-hub/repos/manage/hub-images/immutable-tags/)がありますが、設定するのはリポジトリのオーナーなので、イメージを使う側はこれに頼れません。
+
+digestはイメージの内容のハッシュです。`@sha256:<digest>`でイメージを指定すると、レビューした内容のまま固定できます。lockfileがパッケージのintegrityのハッシュを固定するのと同じ考え方です。
+`node:20.11.1@sha256:<digest>`のようにタグとdigestの両方を残すと、タグは人が読むために残り、Renovateは両方を更新できます。
 
 ### 解決したい課題
 
-未確認です。未決事項を参照してください。
+すべてのイメージのdigestを手で調べて書くのは、多くのDockerfile、composeファイル、CIのファイルにわたると現実的ではありません。
+GitHub Actionsの`uses:`は[pinact](https://github.com/suzuki-shunsuke/pinact)がSHAでのpinを自動化しますが、Dockerイメージの参照には同じくらいシンプルなツールがありません。dockpinはメンテナンスが止まっていて、hadolintにはdigestを必須にするルールがありません。
+CIで検査しないと、digestのない新しい参照が気付かれずにマージされます。また、打ち間違えたdigestや削除されたdigestは、`docker build`が失敗するまで分かりません。
 
 ## 対象ユーザー
 
-### 未確認
+### DockerとCIのファイルを管理する開発者
 
-- **特徴:** 未確認です。未決事項を参照してください。
-- **課題:** 未確認です。未決事項を参照してください。
-- **利用場面:** 未確認です。未決事項を参照してください。
+- **特徴:** 公開レジストリやプライベートレジストリのイメージを指定するDockerfile、composeファイル、GitHub Actionsのファイル、GitLab CIのファイルを持つリポジトリを管理しています。
+- **課題:** digestを手で書かずにすべてのイメージ参照をdigestでpinし、pinしていない新しい参照がマージされるのを止めたいと考えています。
+- **利用場面:** 既存のファイルをpinするために手元で`run --write`を1回実行し、プルリクエストごとにCIで`check`を実行し、その後のdigestの更新はRenovateに任せます。
 
 ## 提供価値
 
-### 未確認
+### 既存のファイルをまとめてpinする
 
-- **受け取る人:** 未確認です。未決事項を参照してください。
-- **提供するもの:** 未確認です。未決事項を参照してください。
-- **理由:** 未確認です。未決事項を参照してください。
+- **受け取る人:** 既存のリポジトリにdigestでのpinを導入する開発者。
+- **提供するもの:** `run --write`が、対象ファイルのすべての参照へ、タグを残したまま、タグが今指しているdigestを付けます。
+- **理由:** digestを手で調べるのは規模が大きくなると続かないためです。タグを残すので、人もRenovateもタグを読み、更新し続けられます。
+
+### pinしていない参照をCIで止める
+
+- **受け取る人:** プルリクエストの開発者とレビュアー。
+- **提供するもの:** `check`は、digestのない参照と、digestがレジストリに存在しない参照があると失敗します。
+- **理由:** digestのない参照を新しく足せるなら、1回pinするだけでは足りないためです。存在も確かめるので、打ち間違えたdigestや削除されたdigestを、ビルドより先に見つけられます。検査はHEADリクエストを使うので、Docker Hubのpull rate limitを消費しません。
 
 ## 主要な概念
 
@@ -57,11 +71,14 @@ dockerfile-pinは、Dockerfile、composeファイル、GitHub Actionsのファ�
 
 ## 成功の定義
 
-未確認です。未決事項を参照してください。
+dockerfile-pinを使うリポジトリのすべてのイメージ参照にdigestが付いていて、digestのない参照がCIによってマージされないこと。
 
 ## 開発の原則
 
-未確認です。未決事項を参照してください。
+- ツールはシンプルに保ちます。pinactがGitHub Actionsで行うように、digestを付けることと検査することに絞ります。
+- 継続的なdigestの更新はRenovateに任せます。dockerfile-pinは最初のpinとCIでの検査を担い、`run --update`は手動で解決し直すためのもので、更新の仕組みではありません。
+- メンテナンスが止まったライブラリではなく、Googleのgo-containerregistry（crane）のようにメンテナンスされているライブラリを土台にします。
+- CIに入れるツール自体を安全に導入できるようにします。リリースにはaquaなどのインストーラーが確かめられるチェックサムを付け、GitHub Releasesのimmutabilityを有効にしています。
 
 ## SLA・SLI・SLO
 
@@ -75,16 +92,4 @@ dockerfile-pinは、Dockerfile、composeファイル、GitHub Actionsのファ�
 
 ## 未決事項
 
-### 目的・利用者・提供価値
-
-- **確認したいこと:** 次の目的・利用者・提供価値が、今もdockerfile-pinに当てはまるか。
-- **候補とその根拠:** タグは書き換えられるので、同じタグが時期によって別のイメージを指すことがあり、digestでpinするとビルドはレビューしたイメージのままになる。pinactがGitHub Actionsで行うのと同じように、サプライチェーン攻撃を防ぐことが目的。利用者はDockerfile・composeファイル・CIのファイルを管理する開発者で、移行のために手元で、検査のためにCIで使う。根拠はREADMEの最初の段落と、`docs/superpowers/specs/2026-03-27-dockerpin-design.md`のMotivationとGoals。
-- **決まるまで:** 背景、課題、対象ユーザー、提供価値、成功の定義、開発の原則は、本文では未確認のままにする。
-- **判断する人:** メンテナー（azu）。
-
-### Renovateとの関係でのdigestの更新
-
-- **確認したいこと:** 2026-03-27の設計ではdigestの自動更新をRenovateに任せる対象外の項目にしているが、今は`run --update`と`--min-age`がある。dockerfile-pinがdigestの更新も担うのか、継続的な更新は引き続きRenovateに任せるのか。
-- **候補とその根拠:** READMEは継続的な自動更新にはRenovateを勧め、`--update`を手動で解決し直す機能として説明している。
-- **決まるまで:** digestの更新の機能は、Renovateとの関係を書かずに一覧へ載せる。
-- **判断する人:** メンテナー（azu）。
+ありません。

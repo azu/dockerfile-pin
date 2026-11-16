@@ -12,27 +12,41 @@ It runs on a developer's machine or in CI and reads registry credentials from `~
 
 ### Background
 
-Unconfirmed. See Open questions.
+A Docker image tag such as `node:20` is mutable: the same tag can be pushed again with different content ([Docker Community Forums](https://forums.docker.com/t/can-a-docker-hub-tag-have-its-content-changed/139358)).
+If someone malicious gains access to a registry, they can push a tampered image under an existing tag, and every build that names only the tag pulls it.
+Supply chain attacks such as the [attack on Trivy](https://www.aquasec.com/blog/trivy-supply-chain-attack-what-you-need-to-know/) show that the registries and pipelines that publish images are realistic targets.
+Docker Hub offers [immutable tags](https://docs.docker.com/docker-hub/repos/manage/hub-images/immutable-tags/), but the repository owner sets them, so the people who use an image cannot rely on them.
+
+A digest is the content hash of an image, so naming an image by `@sha256:<digest>` keeps it on the content that was reviewed, the same way a lockfile fixes a package's integrity hash.
+Keeping both the tag and the digest, as in `node:20.11.1@sha256:<digest>`, leaves the tag for people to read and lets Renovate update both.
 
 ### Problems to solve
 
-Unconfirmed. See Open questions.
+Developers have to look up and write a digest for every image by hand, which is impractical across many Dockerfiles, compose files, and CI files.
+For GitHub Actions `uses:`, [pinact](https://github.com/suzuki-shunsuke/pinact) automates SHA pinning, but no comparably simple tool exists for Docker image references: dockpin's maintenance has stalled, and hadolint has no rule that requires digests.
+Without a check in CI, a new reference without a digest can be merged unnoticed, and a mistyped or deleted digest is found only when `docker build` fails.
 
 ## Target users
 
-### Unconfirmed
+### Developers who maintain Docker and CI files
 
-- **Characteristics:** Unconfirmed. See Open questions.
-- **Problems:** Unconfirmed. See Open questions.
-- **Usage context:** Unconfirmed. See Open questions.
+- **Characteristics:** They maintain repositories with Dockerfiles, compose files, GitHub Actions files, or GitLab CI files that name public or private registry images.
+- **Problems:** They want every image reference pinned by digest, without writing digests by hand, and want to stop new unpinned references from being merged.
+- **Usage context:** They run `run --write` once locally to pin existing files, run `check` in CI on every pull request, and let Renovate keep the digests up to date afterward.
 
 ## Value provided
 
-### Unconfirmed
+### Pinning existing files in bulk
 
-- **Recipient:** Unconfirmed. See Open questions.
-- **Offering:** Unconfirmed. See Open questions.
-- **Reason:** Unconfirmed. See Open questions.
+- **Recipient:** Developers adopting digest pinning in an existing repository.
+- **Offering:** `run --write` adds the digest each tag points to now to every reference in the target files, keeping the tag.
+- **Reason:** Looking up digests by hand does not scale, and keeping the tag lets people and Renovate keep reading and updating it.
+
+### Preventing unpinned references in CI
+
+- **Recipient:** Developers and reviewers of pull requests.
+- **Offering:** `check` fails when a reference has no digest or its digest does not exist in the registry.
+- **Reason:** Pinning once is not enough if new references can be added without digests, and checking existence finds a mistyped or deleted digest before the build does. The check uses HEAD requests, so it does not count against Docker Hub pull rate limits.
 
 ## Key concepts
 
@@ -57,11 +71,14 @@ Unconfirmed. See Open questions.
 
 ## Definition of success
 
-Unconfirmed. See Open questions.
+Every image reference in the repositories that use dockerfile-pin carries a digest, and CI keeps references without digests from being merged.
 
 ## Development principles
 
-Unconfirmed. See Open questions.
+- Keep the tool simple: it adds digests and checks them, like pinact does for GitHub Actions.
+- Leave ongoing digest updates to Renovate. dockerfile-pin does the first pinning and the CI check, and `run --update` is a manual re-resolve rather than an update service.
+- Build on maintained libraries, such as Google's go-containerregistry (crane), instead of stalled ones.
+- Make the tool itself safe to install in CI: releases are published with checksums for installers such as aqua, and GitHub Releases immutability is enabled.
 
 ## SLA, SLI, and SLO
 
@@ -75,16 +92,4 @@ None, for the same reason. The tool does not collect usage data, so there are no
 
 ## Open questions
 
-### Purpose, users, and value
-
-- **What to confirm:** Whether the following purpose, users, and value still describe dockerfile-pin.
-- **Candidate and its sources:** Tags are mutable, so the same tag can point to different images over time, and pinning by digest keeps a build on the image that was reviewed. The aim is to prevent supply chain attacks, as pinact does for GitHub Actions. Users are developers who maintain Dockerfiles, compose files, and CI files, and who run the tool locally for migration and in CI for checking. Sources: the README's first paragraph and the Motivation and Goals of `docs/superpowers/specs/2026-03-27-dockerpin-design.md`.
-- **Until decided:** Background, problems, target users, value, the definition of success, and development principles stay unconfirmed in the body.
-- **Who decides:** The maintainer (azu).
-
-### Digest updates relative to Renovate
-
-- **What to confirm:** The 2026-03-27 design lists automatic digest updates as a non-goal delegated to Renovate, while `run --update` and `--min-age` now exist. Whether dockerfile-pin intends to own digest updates or still leaves ongoing updates to Renovate.
-- **Candidate and its sources:** The README keeps recommending Renovate for automated ongoing updates and describes `--update` as a manual re-resolve.
-- **Until decided:** The Digest updates feature is listed without a stated position relative to Renovate.
-- **Who decides:** The maintainer (azu).
+None.
