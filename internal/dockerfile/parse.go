@@ -302,7 +302,8 @@ func parseRunMountNode(node *parser.Node, stageNames map[string]bool) []FromInst
 		// value up among stage names only, and otherwise pulls it as an image.
 		inst.ImageRef, inst.Digest, inst.SkipReason, inst.Skip = classifyRef(fromValue, stageNames)
 
-		if !inst.Skip && !(mountIndex < len(written) && isSupportedMount(written[mountIndex], value, fromValue)) {
+		supported := mountIndex < len(written) && isSupportedMount(written[mountIndex], value, fromValue)
+		if !inst.Skip && !supported {
 			inst.Skip = true
 			inst.SkipReason = SkipMountSyntax
 		}
