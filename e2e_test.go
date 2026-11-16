@@ -1240,6 +1240,8 @@ lint:
 	result := gitlab.RewriteFile(input, refs, digests)
 	if result != expected {
 		t.Errorf("unexpected output:\n--- got ---\n%s\n--- want ---\n%s", result, expected)
+	}
+}
 
 // TestPinRunMountEndToEnd pins the Dockerfile from
 // https://github.com/azu/dockerfile-pin/issues/61 and compares the whole file.
