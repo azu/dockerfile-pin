@@ -7,6 +7,7 @@ import (
 	"io"
 	"strings"
 
+	"github.com/azu/dockerfile-pin/internal/yamlnode"
 	"gopkg.in/yaml.v3"
 )
 
@@ -44,7 +45,7 @@ func Parse(content []byte) ([]GitLabImageRef, error) {
 		var doc yaml.Node
 		err := decoder.Decode(&doc)
 		if errors.Is(err, io.EOF) {
-			return refs, nil
+			return uniqueRefs(atValueStart(content, refs)), nil
 		}
 		if err != nil {
 			return nil, fmt.Errorf("parsing YAML: %w", err)
@@ -58,18 +59,17 @@ func Parse(content []byte) ([]GitLabImageRef, error) {
 
 // parseImages reads one document of the file.
 func parseImages(root *yaml.Node) []GitLabImageRef {
-	if root.Kind != yaml.MappingNode {
+	root = yamlnode.Resolve(root)
+	if root == nil || root.Kind != yaml.MappingNode {
 		return nil
 	}
 
 	refs := parseGlobalImages(root)
-	for i := 0; i+1 < len(root.Content); i += 2 {
-		name := root.Content[i].Value
-		value := root.Content[i+1]
-		if value.Kind != yaml.MappingNode || nonJobKeywords[name] {
+	for _, entry := range yamlnode.Entries(root) {
+		if entry.Value == nil || entry.Value.Kind != yaml.MappingNode || nonJobKeywords[entry.Key] {
 			continue
 		}
-		refs = append(refs, parseJobImages(name, value)...)
+		refs = append(refs, parseJobImages(entry.Key, entry.Value)...)
 	}
 	return refs
 }
@@ -88,16 +88,16 @@ func parseJobImages(name string, job *yaml.Node) []GitLabImageRef {
 
 func imageRefsIn(node *yaml.Node, prefix string) []GitLabImageRef {
 	var refs []GitLabImageRef
-	if ref := parseImageRef(findMapValue(node, "image"), prefix+"image", "image"); ref != nil {
+	if ref := parseImageRef(yamlnode.Lookup(node, "image"), prefix+"image", "image"); ref != nil {
 		refs = append(refs, *ref)
 	}
-	services := findMapValue(node, "services")
+	services := yamlnode.Lookup(node, "services")
 	if services == nil || services.Kind != yaml.SequenceNode {
 		return refs
 	}
 	for i, entry := range services.Content {
 		location := fmt.Sprintf("%sservices[%d]", prefix, i)
-		if ref := parseImageRef(entry, location, ""); ref != nil {
+		if ref := parseImageRef(yamlnode.Resolve(entry), location, ""); ref != nil {
 			refs = append(refs, *ref)
 		}
 	}
@@ -110,7 +110,7 @@ func parseImageRef(node *yaml.Node, location string, scalarKey string) *GitLabIm
 		return nil
 	}
 	if node.Kind == yaml.MappingNode {
-		return makeRef(findMapValue(node, "name"), location+".name", "name")
+		return makeRef(yamlnode.Lookup(node, "name"), location+".name", "name")
 	}
 	return makeRef(node, location, scalarKey)
 }
@@ -139,14 +139,30 @@ func makeRef(node *yaml.Node, location string, key string) *GitLabImageRef {
 	return ref
 }
 
-func findMapValue(node *yaml.Node, key string) *yaml.Node {
-	if node.Kind != yaml.MappingNode {
-		return nil
-	}
-	for i := 0; i+1 < len(node.Content); i += 2 {
-		if node.Content[i].Value == key {
-			return node.Content[i+1]
+// uniqueRefs keeps one reference for each position in the file.
+// Jobs that share an image through an anchor reach the same text, which must
+// be reported and rewritten once.
+func uniqueRefs(refs []GitLabImageRef) []GitLabImageRef {
+	type position struct{ line, column int }
+	seen := map[position]bool{}
+	var unique []GitLabImageRef
+	for _, ref := range refs {
+		pos := position{ref.Line, ref.Column}
+		if seen[pos] {
+			continue
 		}
+		seen[pos] = true
+		unique = append(unique, ref)
 	}
-	return nil
+	return unique
+}
+
+// atValueStart moves each reference from the position of its YAML node to where
+// its text begins, past any anchor or tag written before it.
+func atValueStart(content []byte, refs []GitLabImageRef) []GitLabImageRef {
+	lines := strings.Split(string(content), "\n")
+	for i := range refs {
+		refs[i].Line, refs[i].Column = yamlnode.ValueStart(lines, refs[i].Line, refs[i].Column)
+	}
+	return refs
 }

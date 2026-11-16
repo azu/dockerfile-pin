@@ -358,3 +358,37 @@ test:
 		t.Errorf("Line = %d, want 4 (the name: line)", r.Line)
 	}
 }
+
+func TestParse_HiddenJobMergedIntoJobs(t *testing.T) {
+	input := []byte(".base: &base\n  image: ruby:3.3\n  services:\n    - postgres:16\n\ntest:\n  <<: *base\n  script: [\"rake\"]\n\nlint:\n  <<: *base\n  script: [\"rubocop\"]\n")
+	refs, err := Parse(input)
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if len(refs) != 2 {
+		t.Fatalf("expected 2 refs, got %d: %+v", len(refs), refs)
+	}
+	if refs[0].ImageRef != "ruby:3.3" || refs[0].Line != 2 {
+		t.Errorf("[0] = %+v", refs[0])
+	}
+	if refs[1].ImageRef != "postgres:16" || refs[1].Line != 4 {
+		t.Errorf("[1] = %+v", refs[1])
+	}
+}
+
+func TestParse_AliasedImageAndServiceEntries(t *testing.T) {
+	input := []byte(".image: &image ruby:3.3\n.db: &db\n  name: postgres:16\n  alias: db\n\ntest:\n  image: *image\n  services:\n    - *db\n  script: [\"rake\"]\n")
+	refs, err := Parse(input)
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if len(refs) != 2 {
+		t.Fatalf("expected 2 refs, got %d: %+v", len(refs), refs)
+	}
+	if refs[0].ImageRef != "ruby:3.3" || refs[0].Line != 1 {
+		t.Errorf("[0] = %+v", refs[0])
+	}
+	if refs[1].ImageRef != "postgres:16" || refs[1].Line != 3 {
+		t.Errorf("[1] = %+v", refs[1])
+	}
+}

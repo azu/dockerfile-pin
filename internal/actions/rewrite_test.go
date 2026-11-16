@@ -296,3 +296,38 @@ func TestRewriteFile_FlowMappingRealDigestLengths(t *testing.T) {
 		t.Errorf("got:\n%s\nwant:\n%s", result, want)
 	}
 }
+
+func TestRewriteFile_AnchoredContainerPinnedOnce(t *testing.T) {
+	input := "on: push\njobs:\n  a:\n    container: &ctr\n      image: node:20\n  b:\n    container: *ctr\n"
+	refs, err := Parse([]byte(input))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	digests := map[int]string{}
+	for i := range refs {
+		digests[i] = "sha256:aaa111"
+	}
+	got := RewriteFile(input, refs, digests)
+	want := "on: push\njobs:\n  a:\n    container: &ctr\n      image: node:20@sha256:aaa111\n  b:\n    container: *ctr\n"
+	if got != want {
+		t.Errorf("RewriteFile() =\n%s\nwant\n%s", got, want)
+	}
+}
+
+func TestRewriteFile_AnchorNameContainsImage(t *testing.T) {
+	// From a review of #62: the anchor name must not be taken for the image.
+	input := "on: push\nenv: {IMAGE: &alpine alpine}\njobs:\n  a:\n    container: *alpine\n    steps:\n      - uses: &docker docker://alpine:3\n      - uses: *docker\n"
+	refs, err := Parse([]byte(input))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	digests := map[int]string{}
+	for i := range refs {
+		digests[i] = "sha256:aaa111"
+	}
+	got := RewriteFile(input, refs, digests)
+	want := "on: push\nenv: {IMAGE: &alpine alpine@sha256:aaa111}\njobs:\n  a:\n    container: *alpine\n    steps:\n      - uses: &docker docker://alpine:3@sha256:aaa111\n      - uses: *docker\n"
+	if got != want {
+		t.Errorf("RewriteFile() =\n%s\nwant\n%s", got, want)
+	}
+}

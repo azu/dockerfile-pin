@@ -47,7 +47,11 @@ When the key is absent, it visits the merge keys in order. A merge key is a key 
 The merge value is resolved and is either a mapping, which is searched with `Lookup`, or a sequence, whose entries are resolved and searched in order, and the first hit is returned.
 This order gives the precedence the [YAML merge key type](https://yaml.org/type/merge.html) defines, and the one `docker compose config` produces for `<<: [*a, *b]`.
 
-`yaml.v3` accepts a node that contains an alias to itself, such as `a: &a {b: *a}`, so `Lookup` and the walks that descend into merged mappings keep a set of visited mapping nodes and stop at one they have already entered.
+`Entries(mapping)` returns the keys of a mapping with their resolved values, its own keys first and then the merged keys it does not override. The readers use it to list services and jobs, so an entry that comes from a merged mapping is read as well.
+
+`ValueStart(lines, line, column)` moves a node's position to where the scalar's text begins. `yaml.v3` reports a scalar that has an anchor or a tag at that property, as in `&alpine alpine`, where a search for the image from that column would find the anchor name first and write the digest onto it. The readers apply it to every reference before removing repeated ones, so the rewriter starts its search at the image.
+
+`yaml.v3` accepts a node that contains an alias to itself, such as `a: &a {b: *a}`, so `Lookup` and `Entries` keep a set of visited mapping nodes and stop at one they have already entered.
 
 ### Removing repeated references
 
