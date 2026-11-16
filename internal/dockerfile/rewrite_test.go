@@ -553,6 +553,16 @@ func TestRewriteFile_RunMountFrom(t *testing.T) {
 			want:  "FROM scratch\nRUN --mount='type=bind,target=/mnt,from=nginx:1.27@" + d + "' true\n",
 		},
 		{
+			name:  "individually quoted options",
+			input: "FROM scratch\nRUN --mount=\"type=bind\",from=nginx:1.27,target=\"/mnt\" true\n",
+			want:  "FROM scratch\nRUN --mount=\"type=bind\",from=nginx:1.27@" + d + ",target=\"/mnt\" true\n",
+		},
+		{
+			name:  "quoted option and quoted value together",
+			input: "FROM scratch\nRUN --mount=type=bind,'from=nginx:1.27',target=/a --mount=\"from\"=\"busybox:1\",target=/b true\n",
+			want:  "FROM scratch\nRUN --mount=type=bind,'from=nginx:1.27@" + d + "',target=/a --mount=\"from\"=\"busybox:1@" + d + "\",target=/b true\n",
+		},
+		{
 			name:  "comment lines inside a continued RUN",
 			input: "FROM scratch\nRUN \\\n    # external configuration from=busybox:1\n    --mount=from=nginx:1.27,target=/a \\\n    # --mount=from=alpine:3,target=/c\n    --mount=from=busybox:1,target=/b \\\n    true\n",
 			want:  "FROM scratch\nRUN \\\n    # external configuration from=busybox:1\n    --mount=from=nginx:1.27@" + d + ",target=/a \\\n    # --mount=from=alpine:3,target=/c\n    --mount=from=busybox:1@" + d + ",target=/b \\\n    true\n",

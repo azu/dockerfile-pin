@@ -51,7 +51,8 @@ For each chosen reference it joins the lines the instruction spans the way the p
 It searches the joined text for the reference, prefixed by `--from=` for `COPY`, then maps the position back to the lines: it removes the bytes of any existing digest and inserts `@<digest>` where the reference without digest ends.
 For `RUN --mount`, the reference is located by reading the text instead of searching for it.
 The rewriter splits the instruction into words, keeping quoted spaces inside a word, and takes the words between the instruction name and the first word that does not start with `--` as the flags; the `--mount=` flag with the recorded position is the one to change.
-It steps over quotes that enclose the whole option list, splits that flag at the commas outside quotes, takes the last option whose key is `from` without regard to case, and writes the digest at its value, after an opening quote if there is one.
+It removes the quotes and escape characters from that flag as the parser does, remembering where each remaining byte came from, because that unquoted text is what BuildKit splits at commas; quotes may enclose the whole option list, one option, or one value.
+It takes the last option whose key is `from` without regard to case and writes the digest at the source position of its value.
 A search for `from=<reference>` would be wrong in three cases: two mounts that name the same image, where it finds the first one twice; a repeated `from`, where BuildKit uses the last one and the first would be pinned; and the same text inside another option such as `source=`.
 Searching the joined text is what makes a reference split by a continuation findable; searching each physical line would miss it and leave the file silently unchanged.
 

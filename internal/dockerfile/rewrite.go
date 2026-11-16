@@ -104,34 +104,56 @@ func findMountFrom(logical string, n int, rawRef string, escape byte) int {
 	if n >= len(spans) {
 		return -1
 	}
-	start, end := spans[n][0]+len(mountFlag), spans[n][1]
-	// The whole option list may be quoted, as in --mount="type=bind,from=...". The
-	// parser drops those quotes before the list is split, so they are stepped over.
-	if end-start >= 2 && (logical[start] == '"' || logical[start] == '\'') && logical[end-1] == logical[start] {
-		start, end = start+1, end-1
-	}
+	// The options are read from the flag as the parser sees it, with quotes and
+	// escapes removed, because that is the text BuildKit splits at commas. Quotes
+	// may enclose the whole list, single options, or single values.
+	decoded, source := unquote(logical, spans[n][0]+len(mountFlag), spans[n][1], escape)
 
 	valueStart := -1
-	for _, field := range splitOptions(logical, start, end, escape) {
-		text := logical[field[0]:field[1]]
-		eq := strings.IndexByte(text, '=')
-		if eq < 0 {
-			continue
+	offset := 0
+	for _, field := range strings.Split(decoded, ",") {
+		// The last from wins.
+		if key, _, ok := strings.Cut(field, "="); ok && strings.ToLower(key) == mountFromKey {
+			valueStart = offset + len(key) + 1
 		}
-		key := strings.TrimLeft(text[:eq], `"'`)
-		if strings.ToLower(key) != mountFromKey {
-			continue
-		}
-		// The last from wins. The parser drops quotes, so one may open the value.
-		valueStart = field[0] + eq + 1
-		if valueStart < field[1] && (logical[valueStart] == '"' || logical[valueStart] == '\'') {
-			valueStart++
-		}
+		offset += len(field) + 1
 	}
-	if valueStart < 0 || !strings.HasPrefix(logical[valueStart:end], rawRef) {
+	if valueStart < 0 || !strings.HasPrefix(decoded[valueStart:], rawRef) || rawRef == "" {
 		return -1
 	}
-	return valueStart
+	// The reference must also be written in one piece in the source, since the
+	// digest is spliced in right after it.
+	at := source[valueStart]
+	if !strings.HasPrefix(logical[at:], rawRef) {
+		return -1
+	}
+	return at
+}
+
+// unquote returns text[start:end] with quote characters and escape characters
+// removed, as the Dockerfile parser reads a flag, and for each byte of the result
+// the index in text it came from.
+func unquote(text string, start, end int, escape byte) (string, []int) {
+	var sb strings.Builder
+	source := make([]int, 0, end-start)
+	var quote byte
+	for i := start; i < end; i++ {
+		b := text[i]
+		switch {
+		case b == escape && quote != '\'' && i+1 < end:
+			i++
+			b = text[i]
+		case quote == 0 && (b == '"' || b == '\''):
+			quote = b
+			continue
+		case b == quote:
+			quote = 0
+			continue
+		}
+		sb.WriteByte(b)
+		source = append(source, i)
+	}
+	return sb.String(), source
 }
 
 // mountFlagSpans returns the [start, end) byte ranges of the --mount flags of a RUN
@@ -164,11 +186,6 @@ func mountFlagSpans(logical string, escape byte) [][2]int {
 // text, keeping quoted spaces and escaped characters inside a word.
 func splitWords(text string, escape byte) [][2]int {
 	return splitOutsideQuotes(text, 0, len(text), escape, func(b byte) bool { return b == ' ' || b == '\t' })
-}
-
-// splitOptions returns the ranges of the comma-separated options in text[start:end].
-func splitOptions(text string, start, end int, escape byte) [][2]int {
-	return splitOutsideQuotes(text, start, end, escape, func(b byte) bool { return b == ',' })
 }
 
 // splitOutsideQuotes splits text[start:end] at the bytes isSep accepts, ignoring
