@@ -1,6 +1,6 @@
 # dockerfile-pin
 
-A CLI tool that adds `@sha256:<digest>` to `FROM` and `COPY --from=` lines in Dockerfiles, `image` fields in docker-compose.yml, and Docker image references in GitHub Actions and GitLab CI files to prevent supply chain attacks.
+A CLI tool that adds `@sha256:<digest>` to `FROM`, `COPY --from=`, and `RUN --mount=...,from=` in Dockerfiles, `image` fields in docker-compose.yml, and Docker image references in GitHub Actions and GitLab CI files to prevent supply chain attacks.
 
 ## Install
 
@@ -334,7 +334,12 @@ ignore-images:
 | `COPY /src /dst` (build context) | Nothing to pin |
 | `ONBUILD COPY --from=image:tag` | Yes |
 | `# escape=` directive | Honored |
-| `ADD --from=...`, `RUN --mount=...,from=...` | Not supported |
+| `RUN --mount=type=bind,from=image:tag,...` | Yes |
+| `RUN --mount=...,from=<stage-name>` (multi-stage ref) | Skipped |
+| `RUN --mount=...,from=image:${TAG}` | Skipped (BuildKit does not expand variables here) |
+| `RUN --mount=type=bind,from="image:tag",...` (quotes, escapes, or a repeated `from=`) | Skipped (`unsupported RUN --mount syntax`); write it without quotes to pin it |
+| `RUN --mount=type=cache,target=...` (no `from=`) | Nothing to pin |
+| `ONBUILD RUN --mount=...,from=image:tag` | Yes |
 
 An `ONBUILD COPY --from=name` is resolved as an image even when a stage in the same
 file shares that name. The trigger does not run in this build: it is recorded into the

@@ -19,7 +19,7 @@ func AddCopyFromDigest(original string, rawRef string, digest string) string {
 // the reference is not found there.
 func addDigestAfter(line string, prefix string, rawRef string, digest string) string {
 	lines := []string{line}
-	if !rewriteSpan(lines, 0, 0, prefix, rawRef, digest, defaultEscape) {
+	if !rewriteSpan(lines, 0, 0, target{prefix: prefix, rawRef: rawRef, mountIndex: -1}, digest, defaultEscape) {
 		return line
 	}
 	return lines[0]
@@ -43,10 +43,6 @@ func RewriteFileReport(content string, instructions []FromInstruction, digests m
 		if !ok || inst.Skip {
 			continue
 		}
-		prefix := ""
-		if inst.IsCopyFrom {
-			prefix = copyFromFlag
-		}
 		first, last := inst.StartLine-1, lastLineIndex(inst)
 		if first < 0 || first >= len(lines) {
 			unrewritten = append(unrewritten, i)
@@ -55,11 +51,65 @@ func RewriteFileReport(content string, instructions []FromInstruction, digests m
 		if last >= len(lines) {
 			last = len(lines) - 1
 		}
-		if !rewriteSpan(lines, first, last, prefix, inst.RawRef, digest, escapeByte(inst.EscapeToken)) {
+		if !rewriteSpan(lines, first, last, targetOf(inst), digest, escapeByte(inst.EscapeToken)) {
 			unrewritten = append(unrewritten, i)
 		}
 	}
 	return strings.Join(lines, "\n"), unrewritten
+}
+
+// target says where in an instruction's text a reference is written.
+type target struct {
+	// prefix is the text that comes right before the reference. An empty prefix
+	// matches the reference anywhere.
+	prefix string
+	rawRef string
+	// mountIndex, when not negative, names the --mount flag of a RUN whose from
+	// option holds the reference. prefix is not used then.
+	mountIndex int
+}
+
+func targetOf(inst FromInstruction) target {
+	switch {
+	case inst.IsCopyFrom:
+		return target{prefix: copyFromFlag, rawRef: inst.RawRef, mountIndex: -1}
+	case inst.IsMountFrom:
+		return target{rawRef: inst.RawRef, mountIndex: inst.MountIndex}
+	}
+	return target{rawRef: inst.RawRef, mountIndex: -1}
+}
+
+// find returns where the reference itself starts in the instruction text, or -1
+// when it is not written there.
+func (t target) find(logical string) int {
+	if t.mountIndex >= 0 {
+		return findMountFrom(logical, t.mountIndex, t.rawRef)
+	}
+	idx := strings.Index(logical, t.prefix+t.rawRef)
+	if idx < 0 {
+		return -1
+	}
+	return idx + len(t.prefix)
+}
+
+// findMountFrom returns where the value of the from option starts inside the n-th
+// (0-based) --mount flag of a RUN, or -1 when the flag is not written in the
+// supported form: options separated by commas, with exactly one from option whose
+// value is rawRef.
+//
+// The reader marks every other form as skipped, so this is only a second check:
+// when the text is not what was read, nothing is rewritten.
+func findMountFrom(logical string, n int, rawRef string) int {
+	spans := plainMountFlagSpans(logical)
+	if n >= len(spans) {
+		return -1
+	}
+	start := spans[n][0] + len(mountFlag)
+	offset, ok := plainFromOffset(logical[start:spans[n][1]], rawRef)
+	if !ok {
+		return -1
+	}
+	return start + offset
 }
 
 // rewriteSpan pins the reference inside the lines an instruction covers, editing lines
@@ -69,13 +119,14 @@ func RewriteFileReport(content string, instructions []FromInstruction, digests m
 // reference broken up by a "\" continuation is still found, and the digest still lands
 // in the right place. Rewriting each physical line on its own would miss those and
 // leave the file silently unchanged.
-func rewriteSpan(lines []string, first, last int, prefix, rawRef, digest string, escape byte) bool {
+func rewriteSpan(lines []string, first, last int, t target, digest string, escape byte) bool {
+	rawRef := t.rawRef
 	if rawRef == "" {
 		return false
 	}
 	logical, origin := joinContinued(lines, first, last, escape)
-	idx := strings.Index(logical, prefix+rawRef)
-	if idx < 0 {
+	refStart := t.find(logical)
+	if refStart < 0 {
 		return false
 	}
 
@@ -85,8 +136,8 @@ func rewriteSpan(lines []string, first, last int, prefix, rawRef, digest string,
 	if atIdx := strings.Index(rawRef, "@"); atIdx >= 0 {
 		baseRef = rawRef[:atIdx]
 	}
-	cutFrom := idx + len(prefix) + len(baseRef)
-	cutTo := idx + len(prefix) + len(rawRef)
+	cutFrom := refStart + len(baseRef)
+	cutTo := refStart + len(rawRef)
 
 	// Where the replaced range starts, and which columns of which lines it covers.
 	insertLine, insertCol := last, len(lines[last])
@@ -150,12 +201,17 @@ func escapeByte(token rune) byte {
 // joinContinued rebuilds the text of an instruction from the lines it spans, the way
 // the parser does: a continued line contributes everything before the escape character
 // and the next line follows it directly. The second result maps each byte of the
-// joined text back to the line and column it came from.
+// joined text back to the line and column it came from. Comment lines between
+// continued lines are left out, as the parser drops them.
 func joinContinued(lines []string, first, last int, escape byte) (string, []bytePos) {
 	var sb strings.Builder
 	origin := make([]bytePos, 0, 128)
 	for i := first; i <= last; i++ {
 		text := lines[i]
+		// A comment line inside a continued instruction is not part of it.
+		if i > first && strings.HasPrefix(strings.TrimLeft(text, " \t"), "#") {
+			continue
+		}
 		if i < last {
 			if idx := strings.LastIndexByte(text, escape); idx >= 0 && strings.TrimSpace(text[idx+1:]) == "" {
 				text = text[:idx]

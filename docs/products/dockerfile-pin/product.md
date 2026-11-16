@@ -61,7 +61,7 @@ Without a check in CI, a new reference without a digest can be merged unnoticed,
 
 | Feature | Description | Specification |
 | --- | --- | --- |
-| Dockerfile image references | Reads image references from `FROM` and `COPY --from=` and writes digests onto them |[Requirements](features/dockerfile-image-references/requirements.md) |
+| Dockerfile image references | Reads image references from `FROM`, `COPY --from=`, and `RUN --mount=...,from=` and writes digests onto them |[Requirements](features/dockerfile-image-references/requirements.md) |
 | YAML image references | Reads image references from compose files, GitHub Actions files, and GitLab CI files and writes digests onto them | [Requirements](features/yaml-image-references/requirements.md) |
 | Target file discovery | Finds target files from `-f`, `--glob`, or the default pattern and decides each file's kind |[Requirements](features/target-file-discovery/requirements.md) |
 | Pinning | `run` resolves tags to digests and shows or writes the pinned files |[Requirements](features/pinning/requirements.md) |
@@ -76,6 +76,7 @@ Every image reference in the repositories that use dockerfile-pin carries a dige
 ## Development principles
 
 - Keep the tool simple: it adds digests and checks them, like pinact does for GitHub Actions.
+- Keep reading and writing apart: the reader decides which written forms are supported, and every other form is left untouched. A form is added when it is needed, rather than following every form a file format allows.
 - Leave ongoing digest updates to Renovate. dockerfile-pin does the first pinning and the CI check, and `run --update` is a manual re-resolve rather than an update service.
 - Build on maintained libraries, such as Google's go-containerregistry (crane), instead of stalled ones.
 - Make the tool itself safe to install in CI: releases are published with checksums for installers such as aqua, and GitHub Releases immutability is enabled.

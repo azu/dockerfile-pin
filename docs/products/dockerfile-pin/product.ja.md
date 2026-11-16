@@ -61,7 +61,7 @@ CIで検査しないと、digestのない新しい参照が気付かれずにマ
 
 | 機能 | 説明 | 仕様 |
 | --- | --- | --- |
-| Dockerfileのイメージ参照 | `FROM`と`COPY --from=`からイメージ参照を読み取り、digestを書き込む |[Requirements](features/dockerfile-image-references/requirements.ja.md) |
+| Dockerfileのイメージ参照 | `FROM`、`COPY --from=`、`RUN --mount=...,from=`からイメージ参照を読み取り、digestを書き込む |[Requirements](features/dockerfile-image-references/requirements.ja.md) |
 | YAMLのイメージ参照 | composeファイル、GitHub Actionsのファイル、GitLab CIのファイルからイメージ参照を読み取り、digestを書き込む | [Requirements](features/yaml-image-references/requirements.ja.md) |
 | 対象ファイルの探索 | `-f`、`--glob`、既定のパターンから対象ファイルを探し、各ファイルの種類を決める |[Requirements](features/target-file-discovery/requirements.ja.md) |
 | pin | `run`がタグをdigestに解決し、pinしたファイルを表示するか書き込む |[Requirements](features/pinning/requirements.ja.md) |
@@ -76,6 +76,7 @@ dockerfile-pinを使うリポジトリのすべてのイメージ参照にdigest
 ## 開発の原則
 
 - ツールはシンプルに保ちます。pinactがGitHub Actionsで行うように、digestを付けることと検査することに絞ります。
+- 読み取りと書き込みを分けて考えます。どの書き方に対応するかは読み取りが決め、それ以外の書き方には何もしません。ファイル形式が許す書き方をすべて追うのではなく、必要になった書き方だけを足します。
 - 継続的なdigestの更新はRenovateに任せます。dockerfile-pinは最初のpinとCIでの検査を担い、`run --update`は手動で解決し直すためのもので、更新の仕組みではありません。
 - メンテナンスが止まったライブラリではなく、Googleのgo-containerregistry（crane）のようにメンテナンスされているライブラリを土台にします。
 - CIに入れるツール自体を安全に導入できるようにします。リリースにはaquaなどのインストーラーが確かめられるチェックサムを付け、GitHub Releasesのimmutabilityを有効にしています。

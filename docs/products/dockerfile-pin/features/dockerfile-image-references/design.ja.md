@@ -12,7 +12,7 @@ Dockerfileの読み取りや書き換えを変える人とエージェント。
 
 ### 前提知識
 
-Dockerfileの構文、マルチステージビルド、BuildKitが`FROM`と`COPY --from`を解決する方法。
+Dockerfileの構文、マルチステージビルド、BuildKitが`FROM`、`COPY --from`、`RUN --mount`を解決する方法。
 
 ### この文書で扱わないこと
 
@@ -38,11 +38,23 @@ Dockerfileの構文、マルチステージビルド、BuildKitが`FROM`と`COPY
 分類はBuildKitと同じ順序で行います。`scratch`、値全体でのステージ名との完全一致、最後の`@`でのdigestの分離の順です。
 `COPY --from`では、ステージの番号（`strconv.Atoi`が受け付けるもの）と、値の中の`$`を先に調べます。BuildKitはこの値をそのまま読み、変数を展開しないためです（[moby/buildkit#2374](https://github.com/moby/buildkit/issues/2374)）。
 
+`RUN`では、パーサーが先頭の各フラグを引用符を外した形で返します。読み取りは`--mount=`で始まるフラグを取り出し、それぞれの値を1件のCSVレコードとして分け、最後の`from`オプションの値を使います。キーは、BuildKitの`parseMount`と同じく小文字にして比べます（[commands_runmount.go](https://github.com/moby/buildkit/blob/v0.16.0/frontend/dockerfile/instructions/commands_runmount.go)）。
+同じ関数は、`from`の中の`$`を`'from' doesn't support variable expansion, define alias stage instead`というエラーで拒否します。そのような値をスキップするのはこのためです。
+その後、値を`COPY --from`と同じように分類しますが、ステージの番号の確認はしません。BuildKitはマウント元に対して`findStateByName`だけを呼び、見つからなければ値をイメージ名としてステージを作るためです（[convert_runmount.go](https://github.com/moby/buildkit/blob/v0.16.0/frontend/dockerfile/dockerfile2llb/convert_runmount.go)）。
+ステージ名は`COPY --from`と同じく、ファイル全体のものを使います。BuildKitはマウント元もすべてのステージから探し、後ろで宣言されたステージはステージの順序のエラーとして報告するためです。
+各参照には、その`--mount`フラグが命令の`--mount`フラグの中で何番目かを記録します。書き換えがこれを必要とします。
+
+読み取りと書き込みは分けて考えます。マウントが対応する1つの書き方で書かれているかどうかは読み取りが決め、それ以外の書き方はすべて`unsupported RUN --mount syntax`でスキップにします。そのため、書き換えは引用符を解釈する必要がありません。
+読み取りは、命令の文字列を引用符を考えずに空白とタブで単語に分け、命令名の後ろから`--`で始まらない最初の単語の手前までをフラグとし、同じ位置のフラグをパーサーが返したものと比べます。パーサーは引用符とescapeの文字を取り除くので、この2つが違うのは、フラグが引用符かescapeの文字を使って書かれたときだけです。
+さらに、値にCSVの引用を始める`"`がないことと、すべてのカンマで分けたときに`from`オプションがちょうど1つであることを求めます。
+
 ### 書き換え
 
 書き換えは、ファイルを行として扱い、その場で編集します。
-選んだ参照ごとに、命令がまたがる行をパーサーと同じ方法でつなぎます。続く行ではescapeの文字とその後ろを落とし、つないだ文字列の各バイトが元のどの行のどの列から来たかを記録します。
+選んだ参照ごとに、命令がまたがる行をパーサーと同じ方法でつなぎます。続く行ではescapeの文字とその後ろを落とし、その間にあるコメントの行は除きます。そして、つないだ文字列の各バイトが元のどの行のどの列から来たかを記録します。
 つないだ文字列から参照を探します。`COPY`では`--from=`を前に付けて探します。見つけた位置を行へ戻し、既存のdigestのバイトを取り除き、digestを除いた参照が終わる場所に`@<digest>`を挿入します。
+`RUN --mount`では、書き換えは、つないだ文字列に対して読み取りと同じ単純な読み方をもう一度行います。記録した位置の`--mount=`フラグを取り、すべてのカンマで分け、値が参照と同じ`from`オプションがちょうど1つあることを求めます。そして、その値にdigestを書きます。
+文字列がその形でないときは、何も書かず、その参照を見つからなかったものとして返します。スキップした参照はここまで来ないので、これは読み取りの後ろにある2つ目の確認です。
 つないだ文字列を探すので、行継続で分かれた参照も見つかります。物理的な行ごとに探すと見落とし、ファイルが気付かないうちに変わらないままになります。
 
 参照が見つからないときは、書き換えできなかった参照の一覧にその添字を入れて返します。`run`はこれを使って警告し、数から外します。
@@ -53,7 +65,7 @@ Dockerfileの構文、マルチステージビルド、BuildKitが`FROM`と`COPY
 
 ## データモデルとER図
 
-`FromInstruction`は、`RawRef`、`ImageRef`、`Digest`、`Platform`、`StageName`、`StartLine`、`EndLine`、`Original`、`Skip`、`SkipReason`、`IsCopyFrom`、`EscapeToken`を持ちます。
+`FromInstruction`は、`RawRef`、`ImageRef`、`Digest`、`Platform`、`StageName`、`StartLine`、`EndLine`、`Original`、`Skip`、`SkipReason`、`IsCopyFrom`、`IsMountFrom`、`MountIndex`、`EscapeToken`を持ちます。
 スキップの理由は公開された定数にしてあり、呼び出し側とテストが文字列を繰り返さずに済みます。
 
 ## APIとインターフェース
@@ -88,9 +100,24 @@ Dockerfileの構文、マルチステージビルド、BuildKitが`FROM`と`COPY
 `COPY --from=image:${TAG}`を、変数が指すイメージにpinできます。
 BuildKitはこの値を展開せずビルドが失敗するので、ビルドできない行にdigestを書くことになり、`check`はその行をOKと報告してしまいます。採用しません（[#54](https://github.com/azu/dockerfile-pin/pull/54)）。
 
+### BuildKitの`instructions`パッケージでマウントを読む
+
+`instructions.Parse`を使えば、各マウントを解析済みの形で、`From`フィールド付きで得られます。
+ただしDockerfile全体を検証し、受け付けない命令があると失敗します。書き換えに必要な行の中の位置も得られません。そのため、すでに使っているパーサーが返すフラグを読みます。
+
+### BuildKitが受け付けるすべての書き方で参照の場所を決める
+
+この変更の以前の版では、書き換えが、値、オプション、オプションの並び全体を囲む引用符、その中のCSVの引用、繰り返された`from`を追っていました。
+書き方ごとに、ソースのどのバイトに当たるかの扱いが必要で、1つ直すたびに別の書き方が見つかりました。そのうちの1つは、`source=`のパスにdigestを書くものでした。
+単純な1つの書き方に対応して残りをスキップすれば、digestを誤った場所に書かないという規則を守れます。その代わり、まれな書き方は開発者が手でpinすることになります。採用しません。書き方は必要になったときに足せます。
+
+### `from=`の数値をステージの番号として扱う
+
+`COPY --from=0`とそろいます。しかしBuildKitはマウント元をそのようには読まないので、ビルドがイメージとしてpullする値を`check`がスキップすることになります。採用しません。
+
 ### `FROM`と`COPY --from`で関数を分ける
 
-呼び出し側はどちらも両方の種類を必要とし、パッケージは内部用なので、`IsCopyFrom`で区別する1つの`Parse`のままにしています（[#54](https://github.com/azu/dockerfile-pin/pull/54)）。
+呼び出し側はどちらも両方の種類を必要とし、パッケージは内部用なので、`IsCopyFrom`で区別する1つの`Parse`のままにしています。`RUN --mount`も`IsMountFrom`でここに加わります（[#54](https://github.com/azu/dockerfile-pin/pull/54)）。
 
 ## 未決事項
 
