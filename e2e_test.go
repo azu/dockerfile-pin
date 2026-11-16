@@ -1240,5 +1240,172 @@ lint:
 	result := gitlab.RewriteFile(input, refs, digests)
 	if result != expected {
 		t.Errorf("unexpected output:\n--- got ---\n%s\n--- want ---\n%s", result, expected)
+
+// TestPinRunMountEndToEnd pins the Dockerfile from
+// https://github.com/azu/dockerfile-pin/issues/61 and compares the whole file.
+func TestPinRunMountEndToEnd(t *testing.T) {
+	input := "FROM ubuntu:24.04 AS base\n" +
+		"RUN --mount=type=bind,from=nginx:1.27,source=/etc/nginx,target=/mnt/nginx \\\n" +
+		"    --mount=type=bind,from=base,target=/base \\\n" +
+		"    cp -r /mnt/nginx /etc/nginx\n"
+	mock := &resolver.MockResolver{
+		Digests: map[string]string{
+			"ubuntu:24.04": "sha256:ubuntu111",
+			"nginx:1.27":   "sha256:nginx222",
+		},
+	}
+
+	want := "FROM ubuntu:24.04@sha256:ubuntu111 AS base\n" +
+		"RUN --mount=type=bind,from=nginx:1.27@sha256:nginx222,source=/etc/nginx,target=/mnt/nginx \\\n" +
+		"    --mount=type=bind,from=base,target=/base \\\n" +
+		"    cp -r /mnt/nginx /etc/nginx\n"
+	if got := pinAll(t, input, mock, false); got != want {
+		t.Errorf("pin =\n%s\nwant:\n%s", got, want)
+	}
+}
+
+// TestPinRunMountUpdateEndToEnd re-resolves digests that are already written, the
+// path taken by `run --update`.
+func TestPinRunMountUpdateEndToEnd(t *testing.T) {
+	input := "FROM scratch\nRUN --mount=from=nginx:1.27@sha256:oldnginx,target=/a --mount=from=nginx:1.27@sha256:oldnginx,target=/b true\n"
+	mock := &resolver.MockResolver{
+		Digests: map[string]string{"nginx:1.27": "sha256:newnginx"},
+	}
+
+	want := "FROM scratch\nRUN --mount=from=nginx:1.27@sha256:newnginx,target=/a --mount=from=nginx:1.27@sha256:newnginx,target=/b true\n"
+	if got := pinAll(t, input, mock, true); got != want {
+		t.Errorf("pin --update =\n%s\nwant:\n%s", got, want)
+	}
+}
+
+// TestCheckRunMountEndToEnd walks the statuses `check` reports for each form of
+// RUN --mount from=.
+func TestCheckRunMountEndToEnd(t *testing.T) {
+	input := "FROM golang:1.22@sha256:golangdigest AS builder\n" +
+		"RUN --mount=from=builder,target=/a true\n" +
+		"RUN --mount=from=nginx:1.27,target=/a --mount=from=busybox:1.36@sha256:validdigest,target=/b true\n" +
+		"RUN --mount=from=alpine:3.19@sha256:missingdigest,target=/a true\n" +
+		"RUN --mount=from=scratch,target=/a true\n" +
+		"RUN --mount=from=nginx:${TAG},target=/a true\n" +
+		"RUN --mount=type=cache,target=/cache true\n"
+
+	mock := &resolver.MockResolver{
+		Digests: map[string]string{
+			"busybox:1.36@sha256:validdigest": "sha256:validdigest",
+			"golang:1.22@sha256:golangdigest": "sha256:golangdigest",
+		},
+	}
+
+	instructions, err := dockerfile.Parse(strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+
+	ctx := context.Background()
+	type checkResult struct {
+		imageRef string
+		status   string
+	}
+	var results []checkResult
+	for _, inst := range instructions {
+		switch {
+		case inst.Skip:
+			results = append(results, checkResult{inst.ImageRef, "skip:" + inst.SkipReason})
+		case inst.Digest == "":
+			results = append(results, checkResult{inst.ImageRef, "fail-missing"})
+		default:
+			exists, _ := mock.Exists(ctx, inst.ImageRef+"@"+inst.Digest)
+			if exists {
+				results = append(results, checkResult{inst.ImageRef, "ok"})
+			} else {
+				results = append(results, checkResult{inst.ImageRef, "fail-notfound"})
+			}
+		}
+	}
+
+	expected := []checkResult{
+		{"golang:1.22", "ok"},
+		{"builder", "skip:" + dockerfile.SkipStageRef},
+		{"nginx:1.27", "fail-missing"},
+		{"busybox:1.36", "ok"},
+		{"alpine:3.19", "fail-notfound"},
+		{"scratch", "skip:" + dockerfile.SkipScratch},
+		{"nginx:${TAG}", "skip:" + dockerfile.SkipMountFromVar},
+	}
+	if len(results) != len(expected) {
+		t.Fatalf("got %d results, want %d: %+v", len(results), len(expected), results)
+	}
+	for i, want := range expected {
+		if results[i] != want {
+			t.Errorf("[%d] got %+v, want %+v", i, results[i], want)
+		}
+	}
+}
+
+// TestPinRunMountTestdataRoundTrip pins testdata/run_mount.Dockerfile, writes it out
+// and reads it back the way `run --write` does, then checks that a second pass has
+// nothing left to change.
+func TestPinRunMountTestdataRoundTrip(t *testing.T) {
+	content, err := os.ReadFile(filepath.Join("testdata", "run_mount.Dockerfile"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	mock := &resolver.MockResolver{
+		Digests: map[string]string{
+			"golang:1.22":                         "sha256:golang111",
+			"nginx:1.27":                          "sha256:nginx222",
+			"busybox:1.36":                        "sha256:busybox333",
+			"registry.example.com:5000/cache:1.0": "sha256:cache444",
+			"curlimages/curl:8.11.1":              "sha256:curl555",
+		},
+	}
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "Dockerfile")
+	if err := os.WriteFile(path, []byte(pinAll(t, string(content), mock, false)), 0644); err != nil {
+		t.Fatal(err)
+	}
+	written, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(written)
+
+	instructions, err := dockerfile.Parse(strings.NewReader(got))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	for i, inst := range instructions {
+		if !inst.Skip && inst.Digest == "" {
+			t.Errorf("[%d] %q left unpinned", i, inst.ImageRef)
+		}
+	}
+
+	for _, want := range []string{
+		"FROM golang:1.22@sha256:golang111 AS builder",
+		"RUN --mount=type=bind,from=nginx:1.27@sha256:nginx222,source=/etc/nginx,target=/mnt/nginx \\",
+		"    --mount=type=bind,from=busybox:1.36@sha256:busybox333,target=/busybox \\",
+		"    --mount=type=cache,from=registry.example.com:5000/cache:1.0@sha256:cache444,target=/cache \\",
+		"ONBUILD RUN --mount=from=curlimages/curl:8.11.1@sha256:curl555,target=/curl /curl/usr/bin/curl --version",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("expected pinned line %q\nin:\n%s", want, got)
+		}
+	}
+
+	for _, want := range []string{
+		"RUN --mount=type=cache,target=/root/.cache/go-build \\",
+		"    --mount=type=bind,from=builder,source=/src,target=/src \\",
+		"RUN --mount=from=alpine:3.19@sha256:aaaa1111,target=/alpine cat /alpine/etc/alpine-release",
+		"RUN --mount=from=nginx:${NGINX_VERSION},target=/mnt true",
+		"RUN --mount=type=bind,source=go.mod,target=go.mod --mount=type=secret,id=token go mod download",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("expected untouched line %q\nin:\n%s", want, got)
+		}
+	}
+
+	if again := pinAll(t, got, mock, false); again != got {
+		t.Errorf("pinning an already-pinned file changed it:\n%s", again)
 	}
 }

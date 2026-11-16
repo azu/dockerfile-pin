@@ -12,7 +12,7 @@ People and agents who change how Dockerfiles are read or rewritten.
 
 ### Prerequisites
 
-Dockerfile syntax, multi-stage builds, and how BuildKit resolves `FROM` and `COPY --from`.
+Dockerfile syntax, multi-stage builds, and how BuildKit resolves `FROM`, `COPY --from`, and `RUN --mount`.
 
 ### Outside this document
 
@@ -32,17 +32,29 @@ Three pieces of state decide how a name is classified.
 `ARG` defaults are collected as the walk proceeds, so a `FROM` sees only the `ARG`s above it, as Docker scopes them.
 Stage names seen so far are collected the same way for `FROM`, because BuildKit resolves each `FROM` only against stages declared above it.
 For `COPY --from`, all stage names in the file are collected before the walk: using a stage declared later is a build error about stage order, not an unpinned image, so there is nothing to pin.
+`RUN --mount` uses the same full set of stage names, because BuildKit also resolves a mount source against all stages and reports a later one as a stage order error.
 
 `ONBUILD` hangs its wrapped instruction on a child node whose position is unset, so the reader copies the `ONBUILD` node's line span and text onto the child and classifies it with no stage names.
 
 Classification runs in the order BuildKit uses: `scratch`, then an exact stage-name match on the whole value, then splitting a digest at the last `@`.
 For `COPY --from`, a stage index (anything `strconv.Atoi` accepts) and a `$` in the value are checked first, because BuildKit reads the value verbatim and does not expand variables there ([moby/buildkit#2374](https://github.com/moby/buildkit/issues/2374)).
 
+For `RUN`, the parser returns each leading flag with its quotes removed, so the reader takes the flags that start with `--mount=`, splits each value as one CSV record, and uses the value of the last `from` option, with the key lowercased for comparison as BuildKit's `parseMount` does ([commands_runmount.go](https://github.com/moby/buildkit/blob/v0.16.0/frontend/dockerfile/instructions/commands_runmount.go)).
+The same function rejects a `$` in `from` with `'from' doesn't support variable expansion, define alias stage instead`, which is why such a value is skipped.
+It then classifies the value like `COPY --from` but without the stage index check: BuildKit calls only `findStateByName` for a mount source and otherwise builds a stage from the value as an image name ([convert_runmount.go](https://github.com/moby/buildkit/blob/v0.16.0/frontend/dockerfile/dockerfile2llb/convert_runmount.go)).
+Each reference records the position of its `--mount` flag among the instruction's `--mount` flags, which the rewriter needs.
+
+Reading and writing are kept apart. The reader decides whether a mount is written in the one supported form, and marks every other form as skipped with `unsupported RUN --mount syntax`, so the rewriter never has to interpret quoting.
+The reader splits the instruction text into words at spaces and tabs with no regard to quotes, takes the words between the instruction name and the first word that does not start with `--` as flags, and compares the flag at the same position with the one the parser returned. They differ exactly when the flag was written with quotes or escape characters, because the parser removes those.
+It also requires the value to hold no `"`, which would start CSV quoting, and to have exactly one `from` option when split at every comma.
+
 ### Rewriting
 
 The rewriter works on the file as lines and edits them in place.
-For each chosen reference it joins the lines the instruction spans the way the parser does, dropping the escape character and what follows it on continued lines, and records for each byte of the joined text the line and column it came from.
+For each chosen reference it joins the lines the instruction spans the way the parser does, dropping the escape character and what follows it on continued lines and leaving out comment lines between them, and records for each byte of the joined text the line and column it came from.
 It searches the joined text for the reference, prefixed by `--from=` for `COPY`, then maps the position back to the lines: it removes the bytes of any existing digest and inserts `@<digest>` where the reference without digest ends.
+For `RUN --mount`, the rewriter repeats the reader's plain reading on the joined text: it takes the `--mount=` flag at the recorded position, splits it at every comma, and requires exactly one `from` option whose value is the reference. It writes the digest at that value.
+When the text is not in that form, it writes nothing and reports the reference as not found. A skipped reference never reaches this point, so this is a second check behind the reader.
 Searching the joined text is what makes a reference split by a continuation findable; searching each physical line would miss it and leave the file silently unchanged.
 
 When the reference is not found, the rewriter returns the reference's index in a list of unrewritten references, so `run` can warn and leave it out of its count.
@@ -53,7 +65,7 @@ A diagram is unnecessary: the flow is `Parse` → caller decides digests → `Re
 
 ## Data model and ER diagrams
 
-`FromInstruction` holds `RawRef`, `ImageRef`, `Digest`, `Platform`, `StageName`, `StartLine`, `EndLine`, `Original`, `Skip`, `SkipReason`, `IsCopyFrom`, and `EscapeToken`.
+`FromInstruction` holds `RawRef`, `ImageRef`, `Digest`, `Platform`, `StageName`, `StartLine`, `EndLine`, `Original`, `Skip`, `SkipReason`, `IsCopyFrom`, `IsMountFrom`, `MountIndex`, and `EscapeToken`.
 Skip reasons are exported constants so callers and tests do not repeat the strings.
 
 ## APIs and interfaces
@@ -88,9 +100,24 @@ None.
 It would pin `COPY --from=image:${TAG}` to the image the variable names.
 BuildKit does not expand the value and the build fails, so a digest would be written onto a line that can never build and `check` would call it OK. It is not chosen ([#54](https://github.com/azu/dockerfile-pin/pull/54)).
 
+### Reading mounts with BuildKit's `instructions` package
+
+`instructions.Parse` would return each mount already parsed, with its `From` field.
+It validates the whole Dockerfile and fails on instructions it does not accept, and it gives no position inside the line for the rewriter, so the flags from the parser already in use are read instead.
+
+### Locating the reference in every form BuildKit accepts
+
+An earlier version of this change made the rewriter follow quotes around a value, an option, or the whole option list, CSV quoting inside those, and a repeated `from`.
+Each form needed its own handling of where the bytes are in the source, and each fix exposed another form; one of them wrote the digest into a `source=` path.
+Supporting one plain form and skipping the rest keeps the rule that a digest is never written at the wrong place, at the cost of leaving rare forms for the developer to pin by hand. It is not chosen; a form can be added when it is needed.
+
+### Treating a number in `from=` as a stage index
+
+It would match `COPY --from=0`. BuildKit does not read a mount source that way, so `check` would skip a value that the build pulls as an image. It is not chosen.
+
 ### Separate functions for `FROM` and `COPY --from`
 
-Both callers want both kinds and the package is internal, so one `Parse` with `IsCopyFrom` is kept ([#54](https://github.com/azu/dockerfile-pin/pull/54)).
+Both callers want both kinds and the package is internal, so one `Parse` with `IsCopyFrom` is kept, and `RUN --mount` joins it with `IsMountFrom` ([#54](https://github.com/azu/dockerfile-pin/pull/54)).
 
 ## Open questions
 
