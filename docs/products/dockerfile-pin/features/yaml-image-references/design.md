@@ -66,7 +66,8 @@ For each reference it searches for the reference text starting at its recorded c
 The new text is the image before any existing `@`, followed by `@` and the digest, with the `docker://` prefix restored for GitHub Actions references that had it.
 
 Column-based replacement was introduced in [#51](https://github.com/azu/dockerfile-pin/pull/51), because flow syntax puts several references on one line, a reference can be a prefix of another, and digest lengths shift columns.
-Why the file is changed as text instead of being re-encoded from the node tree is not recorded.
+The file is changed as text instead of being re-encoded from the node tree so that the comments and the formatting the developer wrote stay as they are.
+Re-encoding with `yaml.v3` keeps comments, but it rewrites the formatting around them: it removes blank lines, normalizes indentation and the spaces before a comment, rejoins the lines of a folded scalar, and writes a merge key as `!!merge <<`.
 
 ## Architecture and sequence diagrams
 
@@ -105,7 +106,7 @@ When the reference text is not found from its column, the line is left unchanged
 
 ## External service integration
 
-None. The only dependency is the `gopkg.in/yaml.v3` library. Why it was chosen over other YAML libraries is not recorded.
+None. The only dependency is the `gopkg.in/yaml.v3` library. It was not chosen over other YAML libraries for a particular reason.
 
 ## Data handling
 
@@ -127,7 +128,7 @@ None.
 
 ## Alternatives considered
 
-No record of the alternatives considered for the original reader and rewriter exists. The alternatives below concern following aliases and merge keys.
+No particular alternatives were considered for the original reader and rewriter. The alternatives below concern following aliases and merge keys.
 
 ### Decode into Go maps and let yaml.v3 apply merges
 

@@ -80,7 +80,7 @@ Proposed in [#19](https://github.com/azu/dockerfile-pin/pull/19) to remove the d
 
 ### Deciding the kind from content
 
-No record of it being considered exists.
+Not chosen. The places where these files live are fixed by their platforms, such as `.github/workflows/` for GitHub Actions, so the path already tells the kind, and reading the content of every file to guess it would be search work with no gain.
 
 ## Open questions
 

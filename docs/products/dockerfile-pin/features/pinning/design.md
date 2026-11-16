@@ -95,7 +95,7 @@ The original design had `--platform` to choose the platform of multi-architectur
 
 ### Writing by default
 
-The first version named the command `pin` with a `--dry-run` flag; it was renamed to `run` with dry-run as the default. The reason is not recorded.
+The first version named the command `pin` with a `--dry-run` flag; it was renamed to `run` with dry-run as the default, because a command that changes files only when asked is safer. This follows tools such as [Prettier](https://prettier.io/docs/cli), which prints the result by default and rewrites files only with `--write`.
 
 ## Open questions
 
