@@ -134,6 +134,12 @@ Scenario: When several services merge the same template, the digest is written o
 - When: The developer runs `dockerfile-pin run --write`.
 - Then: Line 2 becomes `image: alpine:latest@sha256:<digest>` with exactly one `@sha256:` in it.
 
+Scenario: When several services merge the same template, `check` prints one result for the definition
+
+- Given: Services `a` and `b` both have only `<<: *alpine`, and line 2 has `image: alpine:latest`.
+- When: The developer runs `dockerfile-pin check`.
+- Then: Exactly one result is printed for `alpine:latest`, and it names line 2.
+
 Scenario: When a service writes its own `image` next to a merge key, its own image is used
 
 - Given: A service has `<<: *alpine` and `image: node:20`, and no other service merges `*alpine`.
@@ -207,7 +213,7 @@ Merged mappings may themselves contain merge keys.
 This applies to `build` in compose files as well as to the image positions.
 
 A reference reached through aliases or merge keys is reported and changed at the line and column where its text is written, which is inside the anchored node.
-When one written reference is reached from several services or jobs, it is one reference, and its digest is written once.
+When one written reference is reached from several services or jobs, it is one reference: `check` prints one result for it, at the position of the definition, because a result names the place to fix, and its digest is written once.
 
 The same lookup applies to GitHub Actions files.
 GitHub Actions accepts anchors and aliases but does not document merge keys ([changelog](https://github.blog/changelog/2025-09-18-actions-yaml-anchors-and-non-public-workflow-templates/), [documentation](https://docs.github.com/en/actions/reference/workflows-and-actions/reusing-workflow-configurations#yaml-anchors-and-aliases)), so in practice only aliases occur there.
@@ -274,13 +280,6 @@ None. Contacting registries belongs to Pinning and Checking.
 `run --write` changes only the reference text, so the meaning of the rest of the file, such as commands and credentials referenced by CI, does not change.
 
 ## Open questions
-
-### How many results `check` prints for a shared reference
-
-- **What to confirm:** When several services or jobs reach one written reference, whether `check` prints one result for it, or one result per service or job on the same line.
-- **Candidate and its sources:** One result. `check` prints the file, line, and text, not the service, so repeated results would be identical lines; Renovate's fix for the same case ([renovatebot/renovate#35844](https://github.com/renovatebot/renovate/pull/35844)) extracts the anchored image as one dependency.
-- **Until decided:** Design treats it as one result.
-- **Who decides:** The maintainer (azu).
 
 ### A shared reference that some uses skip
 

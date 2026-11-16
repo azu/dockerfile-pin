@@ -150,4 +150,4 @@ Following the node tree keeps the positions the rewriter needs and changes only 
 
 ## Open questions
 
-Reporting a shared reference once, and checking a shared reference when any use does not skip it, depend on the open questions in the [Requirements](requirements.md#open-questions). If either is decided otherwise, change [Removing repeated references](#removing-repeated-references).
+Checking a shared reference when any use does not skip it depends on the open question in the [Requirements](requirements.md#open-questions). If it is decided otherwise, change [Removing repeated references](#removing-repeated-references).
