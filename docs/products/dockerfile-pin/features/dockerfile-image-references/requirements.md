@@ -102,6 +102,12 @@ Scenario: When a `RUN` has several mounts, each `from=` is its own reference
 - When: The developer runs `dockerfile-pin run --write`.
 - Then: Both options become `from=nginx:1.27@sha256:<digest>`, each with exactly one `@sha256:`.
 
+Scenario: When the `from` value or the whole option list is quoted, the digest is written inside the quotes
+
+- Given: A Dockerfile has `RUN --mount=type=bind,from="nginx:1.27",target=/a true` and `RUN --mount="type=bind,from=nginx:1.27,target=/a" true`.
+- When: The developer runs `dockerfile-pin run --write`.
+- Then: The lines become `RUN --mount=type=bind,from="nginx:1.27@sha256:<digest>",target=/a true` and `RUN --mount="type=bind,from=nginx:1.27@sha256:<digest>,target=/a" true`.
+
 Scenario: When `from=` names a stage, `scratch`, or contains a variable, it is skipped
 
 - Given: A Dockerfile declares a stage `builder` and has `RUN --mount=from=builder,target=/a`, `RUN --mount=from=scratch,target=/a`, and `RUN --mount=from=image:${TAG},target=/a`.
@@ -110,7 +116,7 @@ Scenario: When `from=` names a stage, `scratch`, or contains a variable, it is s
 
 Scenario: When a mount is written in a form that is not supported, it is skipped and left unchanged
 
-- Given: A Dockerfile has `RUN --mount=type=bind,from="nginx:1.27",target=/mnt true`, where the value is quoted.
+- Given: A Dockerfile has `RUN --mount=type=bind,from=nginx:1.27,target="/mnt" true`, where a value other than `from` is quoted.
 - When: The developer runs `dockerfile-pin check` and then `dockerfile-pin run --write`.
 - Then: `check` reports the reference as `SKIP` with `unsupported RUN --mount syntax`, and `run` leaves the line unchanged.
 
@@ -175,8 +181,13 @@ A value containing `$` is not expanded, because BuildKit rejects a variable ther
 A name is a stage reference when a stage with that name is declared anywhere in the file. An integer is not a stage index here, unlike `COPY --from=`: BuildKit looks the value up among stage names only, so `from=0` is read as an image named `0`.
 For `ONBUILD RUN`, the stage names of this file do not apply, as with `ONBUILD COPY`.
 
-Only one written form is pinned: the flag is written without quotes or escape characters, its options are separated by commas, and it has exactly one `from` option.
-Any other form that BuildKit accepts, such as a quoted value, a quoted option list, or a repeated `from`, is read so that `check` can show it, but it is skipped and never rewritten.
+Two syntaxes are pinned. In both, the options are separated by commas and there is exactly one `from` option.
+
+- An option list: `--mount=type=bind,from=image:tag,target=/mnt`, written without quotes or escape characters. As a variant, the value of `from` may be enclosed in one pair of quotes: `from="image:tag"`.
+- A quoted option list: `--mount="type=bind,from=image:tag,target=/mnt"`, where one pair of quotes encloses the whole list and no other quote appears inside.
+
+A quote is `"` or `'`.
+Any other form that BuildKit accepts, such as quotes around another value or around a whole option, escape characters, CSV quoting, or a repeated `from`, is read so that `check` can show it, but it is skipped and never rewritten.
 
 ##### Digests and stages
 
@@ -200,7 +211,7 @@ A `# escape=` parser directive changes the line-continuation character, and it i
 | A `FROM` variable without a default | `unresolved ARG variable` |
 | A variable in `COPY --from=` | `unexpanded variable in COPY --from` |
 | A variable in `RUN --mount=...,from=` | `unexpanded variable in RUN --mount from` |
-| A `RUN --mount` written with quotes, escape characters, or more than one `from` | `unsupported RUN --mount syntax` |
+| A `RUN --mount` written in neither supported syntax | `unsupported RUN --mount syntax` |
 
 Skipped references are reported by `check` and left unchanged by `run`.
 

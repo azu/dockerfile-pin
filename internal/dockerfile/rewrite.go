@@ -92,10 +92,9 @@ func (t target) find(logical string) int {
 	return idx + len(t.prefix)
 }
 
-// findMountFrom returns where the value of the from option starts inside the n-th
-// (0-based) --mount flag of a RUN, or -1 when the flag is not written in the
-// supported form: options separated by commas, with exactly one from option whose
-// value is rawRef.
+// findMountFrom returns where the reference starts inside the n-th (0-based)
+// --mount flag of a RUN, or -1 when the flag is not written in a supported form
+// with rawRef as the value of its only from option.
 //
 // The reader marks every other form as skipped, so this is only a second check:
 // when the text is not what was read, nothing is rewritten.
@@ -105,7 +104,7 @@ func findMountFrom(logical string, n int, rawRef string) int {
 		return -1
 	}
 	start := spans[n][0] + len(mountFlag)
-	offset, ok := plainFromOffset(logical[start:spans[n][1]], rawRef)
+	_, offset, ok := locateMountFrom(logical[start:spans[n][1]], rawRef)
 	if !ok {
 		return -1
 	}

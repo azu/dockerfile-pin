@@ -537,6 +537,31 @@ func TestRewriteFile_RunMountFrom(t *testing.T) {
 			want:  "FROM scratch\nRUN --mount=type=bind,FROM=nginx:1.27@" + d + ",target=/a true\n",
 		},
 		{
+			name:  "from value in double quotes",
+			input: "FROM scratch\nRUN --mount=type=bind,from=\"nginx:1.27\",target=/a true\n",
+			want:  "FROM scratch\nRUN --mount=type=bind,from=\"nginx:1.27@" + d + "\",target=/a true\n",
+		},
+		{
+			name:  "from value in single quotes with an existing digest",
+			input: "FROM scratch\nRUN --mount=from='nginx:1.27@sha256:old',target=/a true\n",
+			want:  "FROM scratch\nRUN --mount=from='nginx:1.27@" + d + "',target=/a true\n",
+		},
+		{
+			name:  "whole option list in double quotes",
+			input: "FROM scratch\nRUN --mount=\"type=bind,from=nginx:1.27,target=/mnt\" true\n",
+			want:  "FROM scratch\nRUN --mount=\"type=bind,from=nginx:1.27@" + d + ",target=/mnt\" true\n",
+		},
+		{
+			name:  "whole option list in single quotes with from last",
+			input: "FROM scratch\nRUN --mount='type=bind,target=/mnt,from=nginx:1.27' true\n",
+			want:  "FROM scratch\nRUN --mount='type=bind,target=/mnt,from=nginx:1.27@" + d + "' true\n",
+		},
+		{
+			name:  "the three forms on one RUN",
+			input: "FROM scratch\nRUN --mount=from=nginx:1.27,target=/a \\\n    --mount=from=\"nginx:1.27\",target=/b \\\n    --mount='from=nginx:1.27,target=/c' true\n",
+			want:  "FROM scratch\nRUN --mount=from=nginx:1.27@" + d + ",target=/a \\\n    --mount=from=\"nginx:1.27@" + d + "\",target=/b \\\n    --mount='from=nginx:1.27@" + d + ",target=/c' true\n",
+		},
+		{
 			name:  "ONBUILD RUN",
 			input: "FROM scratch\nONBUILD RUN --mount=from=nginx:1.27,target=/a true\n",
 			want:  "FROM scratch\nONBUILD RUN --mount=from=nginx:1.27@" + d + ",target=/a true\n",
@@ -573,16 +598,19 @@ func TestRewriteFile_RunMountFrom(t *testing.T) {
 // digest is offered for every reference.
 func TestRewriteFile_RunMountUnsupportedFormsUntouched(t *testing.T) {
 	inputs := map[string]string{
-		"quoted value":                  "FROM scratch\nRUN --mount=type=bind,from=\"nginx:1.27\",target=/a true\n",
-		"double-quoted option list":     "FROM scratch\nRUN --mount=\"type=bind,from=nginx:1.27,target=/mnt\" true\n",
-		"single-quoted option list":     "FROM scratch\nRUN --mount='type=bind,target=/mnt,from=nginx:1.27' true\n",
-		"individually quoted options":   "FROM scratch\nRUN --mount=\"type=bind\",from=nginx:1.27,target=\"/mnt\" true\n",
-		"quoted key and value":          "FROM scratch\nRUN --mount=\"from\"=\"busybox:1\",target=/b true\n",
-		"repeated from":                 "FROM scratch\nRUN --mount=from=nginx:1.27,from=nginx:1.27,target=/a true\n",
-		"quoted path with a flag in it": "FROM scratch\nRUN --mount=type=bind,source=\"/path --mount=other\",from=nginx:1.27,target=/a --mount=from=busybox:1,target=/b true\n",
-		"CSV quotes inside quotes":      "FROM scratch\nRUN --mount=from=nginx:1.27,'\"source=/a,from=nginx:1.27\"',target=/mnt true\n",
-		"CSV-quoted from option":        "FROM scratch\nRUN --mount='\"from=nginx:1.27\"',target=/mnt true\n",
-		"escaped character":             "FROM scratch\nRUN --mount=from=nginx\\:1.27,target=/mnt true\n",
+		"individually quoted options":    "FROM scratch\nRUN --mount=\"type=bind\",from=nginx:1.27,target=\"/mnt\" true\n",
+		"quoted key and value":           "FROM scratch\nRUN --mount=\"from\"=\"busybox:1\",target=/b true\n",
+		"another value quoted":           "FROM scratch\nRUN --mount=type=bind,from=nginx:1.27,target=\"/mnt\" true\n",
+		"from and another value quoted":  "FROM scratch\nRUN --mount=type=bind,from=\"nginx:1.27\",target=\"/mnt\" true\n",
+		"quoted from option":             "FROM scratch\nRUN --mount=type=bind,'from=nginx:1.27',target=/mnt true\n",
+		"mismatched quotes":              "FROM scratch\nRUN --mount=type=bind,from=\"nginx:1.27',target=/mnt true\n",
+		"quoted list with a space":       "FROM scratch\nRUN --mount=\"type=bind,source=/p q,from=nginx:1.27,target=/mnt\" true\n",
+		"quoted list with repeated from": "FROM scratch\nRUN --mount=\"from=nginx:1.27,from=nginx:1.27\" true\n",
+		"repeated from":                  "FROM scratch\nRUN --mount=from=nginx:1.27,from=nginx:1.27,target=/a true\n",
+		"quoted path with a flag in it":  "FROM scratch\nRUN --mount=type=bind,source=\"/path --mount=other\",from=nginx:1.27,target=/a --mount=from=busybox:1,target=/b true\n",
+		"CSV quotes inside quotes":       "FROM scratch\nRUN --mount=from=nginx:1.27,'\"source=/a,from=nginx:1.27\"',target=/mnt true\n",
+		"CSV-quoted from option":         "FROM scratch\nRUN --mount='\"from=nginx:1.27\"',target=/mnt true\n",
+		"escaped character":              "FROM scratch\nRUN --mount=from=nginx\\:1.27,target=/mnt true\n",
 	}
 	for name, input := range inputs {
 		t.Run(name, func(t *testing.T) {

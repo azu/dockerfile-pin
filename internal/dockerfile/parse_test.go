@@ -654,13 +654,43 @@ func TestParse_RunMountFrom(t *testing.T) {
 			want:  []wantInst{{imageRef: "nginx:1.27", rawRef: "nginx:1.27"}},
 		},
 		{
-			name:  "quoted value is not a supported form",
+			name:  "from value in double quotes",
 			input: "FROM a\nRUN --mount=type=bind,from=\"nginx:1.27\",target=/b true\n",
+			want:  []wantInst{{imageRef: "nginx:1.27", rawRef: "nginx:1.27"}},
+		},
+		{
+			name:  "from value in single quotes, already pinned",
+			input: "FROM a\nRUN --mount=from='nginx:1.27@sha256:abc',target=/b true\n",
+			want:  []wantInst{{imageRef: "nginx:1.27", rawRef: "nginx:1.27@sha256:abc", digest: "sha256:abc"}},
+		},
+		{
+			name:  "whole option list in single quotes",
+			input: "FROM a\nRUN --mount='type=bind,from=nginx:1.27,target=/b' true\n",
+			want:  []wantInst{{imageRef: "nginx:1.27", rawRef: "nginx:1.27"}},
+		},
+		{
+			name:  "whole option list in double quotes",
+			input: "FROM a\nRUN --mount=\"type=bind,target=/b,from=nginx:1.27\" true\n",
+			want:  []wantInst{{imageRef: "nginx:1.27", rawRef: "nginx:1.27"}},
+		},
+		{
+			name:  "another value in quotes is not a supported form",
+			input: "FROM a\nRUN --mount=type=bind,from=nginx:1.27,target=\"/b\" true\n",
 			want:  []wantInst{{imageRef: "nginx:1.27", rawRef: "nginx:1.27", skip: true, skipReason: SkipMountSyntax}},
 		},
 		{
-			name:  "quoted option list is not a supported form",
-			input: "FROM a\nRUN --mount='type=bind,from=nginx:1.27,target=/b' true\n",
+			name:  "from value and another value in quotes is not a supported form",
+			input: "FROM a\nRUN --mount=type=bind,from=\"nginx:1.27\",target=\"/b\" true\n",
+			want:  []wantInst{{imageRef: "nginx:1.27", rawRef: "nginx:1.27", skip: true, skipReason: SkipMountSyntax}},
+		},
+		{
+			name:  "quoted from option is not a supported form",
+			input: "FROM a\nRUN --mount=type=bind,'from=nginx:1.27',target=/b true\n",
+			want:  []wantInst{{imageRef: "nginx:1.27", rawRef: "nginx:1.27", skip: true, skipReason: SkipMountSyntax}},
+		},
+		{
+			name:  "quoted list with a space in it is not a supported form",
+			input: "FROM a\nRUN --mount=\"type=bind,source=/p q,from=nginx:1.27,target=/b\" true\n",
 			want:  []wantInst{{imageRef: "nginx:1.27", rawRef: "nginx:1.27", skip: true, skipReason: SkipMountSyntax}},
 		},
 		{
