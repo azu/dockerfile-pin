@@ -554,6 +554,11 @@ CLI flag takes precedence over the configuration file value.
 
 For automated ongoing digest updates, use [Renovate](https://docs.renovatebot.com/docker/) which understands the `image:tag@sha256:digest` format.
 
+## Specifications
+
+The purpose, requirements, and design of dockerfile-pin are written in [docs/products/dockerfile-pin/product.md](docs/products/dockerfile-pin/product.md) ([日本語](docs/products/dockerfile-pin/product.ja.md)).
+Each feature has its own requirements and design under [docs/products/dockerfile-pin/features/](docs/products/dockerfile-pin/features/).
+
 ## License
 
 MIT
