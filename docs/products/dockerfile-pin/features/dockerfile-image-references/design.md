@@ -47,11 +47,11 @@ Each reference records the position of its `--mount` flag among the instruction'
 ### Rewriting
 
 The rewriter works on the file as lines and edits them in place.
-For each chosen reference it joins the lines the instruction spans the way the parser does, dropping the escape character and what follows it on continued lines, and records for each byte of the joined text the line and column it came from.
+For each chosen reference it joins the lines the instruction spans the way the parser does, dropping the escape character and what follows it on continued lines and leaving out comment lines between them, and records for each byte of the joined text the line and column it came from.
 It searches the joined text for the reference, prefixed by `--from=` for `COPY`, then maps the position back to the lines: it removes the bytes of any existing digest and inserts `@<digest>` where the reference without digest ends.
 For `RUN --mount`, the reference is located by reading the text instead of searching for it.
 The rewriter splits the instruction into words, keeping quoted spaces inside a word, and takes the words between the instruction name and the first word that does not start with `--` as the flags; the `--mount=` flag with the recorded position is the one to change.
-It splits that flag at the commas outside quotes, takes the last option whose key is `from` without regard to case, and writes the digest at its value, after an opening quote if there is one.
+It steps over quotes that enclose the whole option list, splits that flag at the commas outside quotes, takes the last option whose key is `from` without regard to case, and writes the digest at its value, after an opening quote if there is one.
 A search for `from=<reference>` would be wrong in three cases: two mounts that name the same image, where it finds the first one twice; a repeated `from`, where BuildKit uses the last one and the first would be pinned; and the same text inside another option such as `source=`.
 Searching the joined text is what makes a reference split by a continuation findable; searching each physical line would miss it and leave the file silently unchanged.
 

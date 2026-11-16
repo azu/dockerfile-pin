@@ -543,6 +543,21 @@ func TestRewriteFile_RunMountFrom(t *testing.T) {
 			want:  "FROM scratch\nRUN --network=none --mount=from=nginx:1.27@" + d + ",target=/a --security=insecure --mount=from=busybox:1@" + d + ",target=/b true\n",
 		},
 		{
+			name:  "double-quoted option list",
+			input: "FROM scratch\nRUN --mount=\"type=bind,from=nginx:1.27,target=/mnt\" true\n",
+			want:  "FROM scratch\nRUN --mount=\"type=bind,from=nginx:1.27@" + d + ",target=/mnt\" true\n",
+		},
+		{
+			name:  "single-quoted option list with from last",
+			input: "FROM scratch\nRUN --mount='type=bind,target=/mnt,from=nginx:1.27' true\n",
+			want:  "FROM scratch\nRUN --mount='type=bind,target=/mnt,from=nginx:1.27@" + d + "' true\n",
+		},
+		{
+			name:  "comment lines inside a continued RUN",
+			input: "FROM scratch\nRUN \\\n    # external configuration from=busybox:1\n    --mount=from=nginx:1.27,target=/a \\\n    # --mount=from=alpine:3,target=/c\n    --mount=from=busybox:1,target=/b \\\n    true\n",
+			want:  "FROM scratch\nRUN \\\n    # external configuration from=busybox:1\n    --mount=from=nginx:1.27@" + d + ",target=/a \\\n    # --mount=from=alpine:3,target=/c\n    --mount=from=busybox:1@" + d + ",target=/b \\\n    true\n",
+		},
+		{
 			name:  "ONBUILD RUN",
 			input: "FROM scratch\nONBUILD RUN --mount=from=nginx:1.27,target=/a true\n",
 			want:  "FROM scratch\nONBUILD RUN --mount=from=nginx:1.27@" + d + ",target=/a true\n",

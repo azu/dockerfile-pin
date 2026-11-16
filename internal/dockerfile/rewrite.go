@@ -105,6 +105,11 @@ func findMountFrom(logical string, n int, rawRef string, escape byte) int {
 		return -1
 	}
 	start, end := spans[n][0]+len(mountFlag), spans[n][1]
+	// The whole option list may be quoted, as in --mount="type=bind,from=...". The
+	// parser drops those quotes before the list is split, so they are stepped over.
+	if end-start >= 2 && (logical[start] == '"' || logical[start] == '\'') && logical[end-1] == logical[start] {
+		start, end = start+1, end-1
+	}
 
 	valueStart := -1
 	for _, field := range splitOptions(logical, start, end, escape) {
@@ -289,12 +294,17 @@ func escapeByte(token rune) byte {
 // joinContinued rebuilds the text of an instruction from the lines it spans, the way
 // the parser does: a continued line contributes everything before the escape character
 // and the next line follows it directly. The second result maps each byte of the
-// joined text back to the line and column it came from.
+// joined text back to the line and column it came from. Comment lines between
+// continued lines are left out, as the parser drops them.
 func joinContinued(lines []string, first, last int, escape byte) (string, []bytePos) {
 	var sb strings.Builder
 	origin := make([]bytePos, 0, 128)
 	for i := first; i <= last; i++ {
 		text := lines[i]
+		// A comment line inside a continued instruction is not part of it.
+		if i > first && strings.HasPrefix(strings.TrimLeft(text, " \t"), "#") {
+			continue
+		}
 		if i < last {
 			if idx := strings.LastIndexByte(text, escape); idx >= 0 && strings.TrimSpace(text[idx+1:]) == "" {
 				text = text[:idx]
