@@ -1,2 +1,4 @@
 /dockerfile-pin
 dist/
+
+/.sdev/
