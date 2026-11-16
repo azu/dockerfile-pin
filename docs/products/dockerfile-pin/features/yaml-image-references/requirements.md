@@ -214,6 +214,7 @@ This applies to `build` in compose files as well as to the image positions.
 
 A reference reached through aliases or merge keys is reported and changed at the line and column where its text is written, which is inside the anchored node.
 When one written reference is reached from several services or jobs, it is one reference: `check` prints one result for it, at the position of the definition, because a result names the place to fix, and its digest is written once.
+Whether a shared reference is skipped is decided from the merged result of each use: when at least one service or job that reaches it would be checked, for example a compose service without `build`, the reference is checked and pinned, and the result still names the definition.
 
 The same lookup applies to GitHub Actions files.
 GitHub Actions accepts anchors and aliases but does not document merge keys ([changelog](https://github.blog/changelog/2025-09-18-actions-yaml-anchors-and-non-public-workflow-templates/), [documentation](https://docs.github.com/en/actions/reference/workflows-and-actions/reusing-workflow-configurations#yaml-anchors-and-aliases)), so in practice only aliases occur there.
@@ -281,9 +282,4 @@ None. Contacting registries belongs to Pinning and Checking.
 
 ## Open questions
 
-### A shared reference that some uses skip
-
-- **What to confirm:** When one written reference is reached from a compose service that has `build` and from one that does not, whether it is skipped or checked.
-- **Candidate and its sources:** Checked and pinned, because the service without `build` pulls the image; no source covers this case.
-- **Until decided:** Design checks it when any use does not skip it.
-- **Who decides:** The maintainer (azu).
+None.

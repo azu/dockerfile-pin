@@ -151,4 +151,4 @@ Following the node tree keeps the positions the rewriter needs and changes only 
 
 ## Open questions
 
-Checking a shared reference when any use does not skip it depends on the open question in the [Requirements](requirements.md#open-questions). If it is decided otherwise, change [Removing repeated references](#removing-repeated-references).
+None.

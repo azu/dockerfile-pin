@@ -214,6 +214,7 @@ YAMLのアンカーとマージキーで設定を共有する開発者として�
 
 エイリアスやマージキーを通して届いた参照は、その文字列が書かれている行と列、つまりアンカーが付いたノードの中で報告し、変えます。
 書かれた1つの参照に複数のサービスやジョブから届くときも、それは1つの参照です。結果は直す場所を示すものなので、`check`は定義の位置について結果を1件表示し、digestは1回だけ書きます。
+共有した参照をスキップするかどうかは、それぞれの使い方でマージした後の結果から決めます。`build`を持たないcomposeのサービスのように、届くサービスやジョブのうち1つでもcheckの対象になるなら、その参照をcheckしてpinし、結果は定義の位置を指します。
 
 GitHub Actionsのファイルにも同じ探し方を使います。
 GitHub Actionsはアンカーとエイリアスを受け付けますが、マージキーは文書に載っていません（[changelog](https://github.blog/changelog/2025-09-18-actions-yaml-anchors-and-non-public-workflow-templates/)、[ドキュメント](https://docs.github.com/en/actions/reference/workflows-and-actions/reusing-workflow-configurations#yaml-anchors-and-aliases)）。そのため、実際にはエイリアスだけが使われます。
@@ -281,9 +282,4 @@ YAMLとして正しくないファイルは、ファイル名付きのエラー�
 
 ## 未決事項
 
-### 一部の使い方がスキップする共有の参照
-
-- **確認したいこと:** 書かれた1つの参照に、`build`を持つcomposeのサービスと持たないサービスの両方から届くとき、スキップするかcheckするか。
-- **候補とその根拠:** checkしてpinする。`build`を持たないサービスはそのイメージをpullするため。この場合を扱った資料はない。
-- **決まるまで:** Designでは、どれか1つの使い方がスキップしなければcheckする。
-- **判断する人:** メンテナー（azu）。
+ありません。
