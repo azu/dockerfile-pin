@@ -295,3 +295,20 @@ func TestRewriteFile_HiddenJobTemplatePinnedOnce(t *testing.T) {
 		t.Errorf("RewriteFile() =\n%s\nwant\n%s", got, want)
 	}
 }
+
+func TestRewriteFile_AnchorNameContainsImage(t *testing.T) {
+	input := ".image: &ruby ruby\n.services: &services [&postgres postgres, &redis \"redis\"]\n\ntest:\n  image: *ruby\n  services: *services\n"
+	refs, err := Parse([]byte(input))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	digests := map[int]string{}
+	for i := range refs {
+		digests[i] = "sha256:aaa111"
+	}
+	got := RewriteFile(input, refs, digests)
+	want := ".image: &ruby ruby@sha256:aaa111\n.services: &services [&postgres postgres@sha256:aaa111, &redis \"redis@sha256:aaa111\"]\n\ntest:\n  image: *ruby\n  services: *services\n"
+	if got != want {
+		t.Errorf("RewriteFile() =\n%s\nwant\n%s", got, want)
+	}
+}

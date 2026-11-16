@@ -38,10 +38,11 @@ func Parse(content []byte) ([]ActionsImageRef, error) {
 	// Detect file type by top-level keys
 	if jobsNode := yamlnode.Lookup(root, "jobs"); jobsNode != nil {
 		refs, err := parseWorkflow(jobsNode)
-		return uniqueRefs(refs), err
+		return uniqueRefs(atValueStart(content, refs)), err
 	}
 	if runsNode := yamlnode.Lookup(root, "runs"); runsNode != nil {
-		return parseAction(runsNode)
+		refs, err := parseAction(runsNode)
+		return atValueStart(content, refs), err
 	}
 	return nil, nil
 }
@@ -194,4 +195,14 @@ func uniqueRefs(refs []ActionsImageRef) []ActionsImageRef {
 		unique = append(unique, ref)
 	}
 	return unique
+}
+
+// atValueStart moves each reference from the position of its YAML node to where
+// its text begins, past any anchor or tag written before it.
+func atValueStart(content []byte, refs []ActionsImageRef) []ActionsImageRef {
+	lines := strings.Split(string(content), "\n")
+	for i := range refs {
+		refs[i].Line, refs[i].Column = yamlnode.ValueStart(lines, refs[i].Line, refs[i].Column)
+	}
+	return refs
 }

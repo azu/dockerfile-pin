@@ -109,3 +109,35 @@ func mergedMappings(mapping *yaml.Node) []*yaml.Node {
 func isMergeKey(key *yaml.Node) bool {
 	return key.Kind == yaml.ScalarNode && key.Tag == mergeTag
 }
+
+// ValueStart returns the position, 1-based, where the text of a scalar begins,
+// given the position yaml.v3 reports for its node.
+//
+// A node that carries an anchor or a tag is reported at that property, as in
+// `&alpine alpine`, where a search for the value would find the anchor name
+// first. The properties are skipped here, onto a following line if the value
+// was written there. The position is returned unchanged when it is not in lines.
+func ValueStart(lines []string, line, column int) (int, int) {
+	l, c := line-1, column-1
+	if l < 0 || l >= len(lines) || c < 0 || c > len(lines[l]) {
+		return line, column
+	}
+	for l < len(lines) {
+		text := lines[l]
+		for c < len(text) && (text[c] == ' ' || text[c] == '\t') {
+			c++
+		}
+		if c >= len(text) {
+			// Properties may stand alone on a line, with the value on the next.
+			l, c = l+1, 0
+			continue
+		}
+		if text[c] != '&' && text[c] != '!' {
+			return l + 1, c + 1
+		}
+		for c < len(text) && text[c] != ' ' && text[c] != '\t' {
+			c++
+		}
+	}
+	return line, column
+}

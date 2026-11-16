@@ -9,6 +9,7 @@ import (
 
 	"github.com/azu/dockerfile-pin/cmd"
 	"github.com/azu/dockerfile-pin/internal/actions"
+	"github.com/azu/dockerfile-pin/internal/compose"
 	"github.com/azu/dockerfile-pin/internal/dockerfile"
 	"github.com/azu/dockerfile-pin/internal/gitlab"
 	"github.com/azu/dockerfile-pin/internal/resolver"
@@ -1000,5 +1001,244 @@ func TestPinCopyFromTestdataRoundTrip(t *testing.T) {
 
 	if again := pinAll(t, got, mock, false); again != got {
 		t.Errorf("pinning an already-pinned file changed it:\n%s", again)
+	}
+}
+
+// TestPinComposeAnchorsEndToEnd pins the compose file from
+// https://github.com/azu/dockerfile-pin/issues/59 and compares the whole file: the
+// digest is written once, on the template, however many services merge it.
+func TestPinComposeAnchorsEndToEnd(t *testing.T) {
+	input := `x-alpine: &alpine
+  image: alpine:latest   # shared
+
+x-node: &node node:20
+
+services:
+  bash:
+    <<: *alpine
+    entrypoint: ["/bin/sh", "-c"]
+  sh:
+    <<: *alpine
+  web:
+    image: *node
+  built:
+    <<: *alpine
+    build: .
+  own:
+    <<: *alpine
+    image: busybox:1.36
+`
+	expected := `x-alpine: &alpine
+  image: alpine:latest@sha256:aaa111   # shared
+
+x-node: &node node:20@sha256:bbb222
+
+services:
+  bash:
+    <<: *alpine
+    entrypoint: ["/bin/sh", "-c"]
+  sh:
+    <<: *alpine
+  web:
+    image: *node
+  built:
+    <<: *alpine
+    build: .
+  own:
+    <<: *alpine
+    image: busybox:1.36@sha256:ccc333
+`
+	mock := &resolver.MockResolver{
+		Digests: map[string]string{
+			"alpine:latest": "sha256:aaa111",
+			"node:20":       "sha256:bbb222",
+			"busybox:1.36":  "sha256:ccc333",
+		},
+	}
+
+	refs, err := compose.Parse([]byte(input))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	// One reference per written image: the template shared by three services, the
+	// anchored scalar, and the image one service writes itself.
+	if len(refs) != 3 {
+		t.Fatalf("got %d refs, want 3: %+v", len(refs), refs)
+	}
+
+	ctx := context.Background()
+	digests := make(map[int]string)
+	for i, ref := range refs {
+		if ref.Skip || ref.Digest != "" {
+			continue
+		}
+		digest, err := mock.Resolve(ctx, ref.ImageRef)
+		if err != nil {
+			t.Fatalf("[%d] unexpected resolve of %q: %v", i, ref.ImageRef, err)
+		}
+		digests[i] = digest
+	}
+
+	result := compose.RewriteFile(input, refs, digests)
+	if result != expected {
+		t.Errorf("unexpected output:\n--- got ---\n%s\n--- want ---\n%s", result, expected)
+	}
+
+	// A second pass has nothing left to pin, and reports the template once.
+	again, err := compose.Parse([]byte(result))
+	if err != nil {
+		t.Fatalf("Parse() of the pinned file error = %v", err)
+	}
+	if len(again) != 3 {
+		t.Fatalf("got %d refs in the pinned file, want 3: %+v", len(again), again)
+	}
+	for _, ref := range again {
+		if ref.Skip || ref.Digest == "" {
+			t.Errorf("after pinning, %q at line %d is not pinned: %+v", ref.ImageRef, ref.Line, ref)
+		}
+	}
+	if again[0].Line != 2 {
+		t.Errorf("shared template reported at line %d, want 2 (the definition)", again[0].Line)
+	}
+}
+
+// TestPinWorkflowAnchorsEndToEnd pins a workflow whose jobs share a container and
+// services through anchors and aliases.
+func TestPinWorkflowAnchorsEndToEnd(t *testing.T) {
+	input := `on: push
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    container: &container
+      image: node:20
+    services: &services
+      db:
+        image: postgres:16
+    steps:
+      - uses: &alpine docker://alpine:3.20
+  lint:
+    runs-on: ubuntu-latest
+    container: *container
+    services: *services
+    steps:
+      - uses: *alpine
+`
+	expected := `on: push
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    container: &container
+      image: node:20@sha256:aaa111
+    services: &services
+      db:
+        image: postgres:16@sha256:bbb222
+    steps:
+      - uses: &alpine docker://alpine:3.20@sha256:ccc333
+  lint:
+    runs-on: ubuntu-latest
+    container: *container
+    services: *services
+    steps:
+      - uses: *alpine
+`
+	mock := &resolver.MockResolver{
+		Digests: map[string]string{
+			"node:20":     "sha256:aaa111",
+			"postgres:16": "sha256:bbb222",
+			"alpine:3.20": "sha256:ccc333",
+		},
+	}
+
+	refs, err := actions.Parse([]byte(input))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if len(refs) != 3 {
+		t.Fatalf("got %d refs, want 3: %+v", len(refs), refs)
+	}
+
+	ctx := context.Background()
+	digests := make(map[int]string)
+	for i, ref := range refs {
+		digest, err := mock.Resolve(ctx, ref.ImageRef)
+		if err != nil {
+			t.Fatalf("[%d] unexpected resolve of %q: %v", i, ref.ImageRef, err)
+		}
+		digests[i] = digest
+	}
+
+	result := actions.RewriteFile(input, refs, digests)
+	if result != expected {
+		t.Errorf("unexpected output:\n--- got ---\n%s\n--- want ---\n%s", result, expected)
+	}
+}
+
+// TestPinGitLabCIAnchorsEndToEnd pins a GitLab CI file whose jobs merge a hidden job.
+func TestPinGitLabCIAnchorsEndToEnd(t *testing.T) {
+	input := `.base: &base
+  image: ruby:3.3
+  services:
+    - postgres:16
+    - &redis redis
+
+test:
+  <<: *base
+  script:
+    - rake test
+
+lint:
+  <<: *base
+  services:
+    - *redis
+  script:
+    - rubocop
+`
+	expected := `.base: &base
+  image: ruby:3.3@sha256:aaa111
+  services:
+    - postgres:16@sha256:bbb222
+    - &redis redis@sha256:ccc333
+
+test:
+  <<: *base
+  script:
+    - rake test
+
+lint:
+  <<: *base
+  services:
+    - *redis
+  script:
+    - rubocop
+`
+	mock := &resolver.MockResolver{
+		Digests: map[string]string{
+			"ruby:3.3":    "sha256:aaa111",
+			"postgres:16": "sha256:bbb222",
+			"redis":       "sha256:ccc333",
+		},
+	}
+
+	refs, err := gitlab.Parse([]byte(input))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if len(refs) != 3 {
+		t.Fatalf("got %d refs, want 3: %+v", len(refs), refs)
+	}
+
+	ctx := context.Background()
+	digests := make(map[int]string)
+	for i, ref := range refs {
+		digest, err := mock.Resolve(ctx, ref.ImageRef)
+		if err != nil {
+			t.Fatalf("[%d] unexpected resolve of %q: %v", i, ref.ImageRef, err)
+		}
+		digests[i] = digest
+	}
+
+	result := gitlab.RewriteFile(input, refs, digests)
+	if result != expected {
+		t.Errorf("unexpected output:\n--- got ---\n%s\n--- want ---\n%s", result, expected)
 	}
 }

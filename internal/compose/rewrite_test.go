@@ -146,3 +146,48 @@ func TestRewriteCompose_AnchoredScalarKeepsAnchor(t *testing.T) {
 		t.Errorf("RewriteFile() =\n%s\nwant\n%s", got, want)
 	}
 }
+
+func TestRewriteCompose_AnchorNameContainsImage(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "anchor named like the image",
+			input: "x-image: &alpine alpine\nservices:\n  a:\n    image: *alpine\n",
+			want:  "x-image: &alpine alpine@sha256:aaa111\nservices:\n  a:\n    image: *alpine\n",
+		},
+		{
+			name:  "anchor and tag before a quoted image",
+			input: "x-image: &alpine !!str \"alpine\"\nservices:\n  a:\n    image: *alpine\n",
+			want:  "x-image: &alpine !!str \"alpine@sha256:aaa111\"\nservices:\n  a:\n    image: *alpine\n",
+		},
+		{
+			name:  "flow mapping",
+			input: "x-images: {a: &alpine alpine, b: &alpine3 alpine:3}\nservices:\n  a: {image: *alpine}\n  b: {image: *alpine3}\n",
+			want:  "x-images: {a: &alpine alpine@sha256:aaa111, b: &alpine3 alpine:3@sha256:aaa111}\nservices:\n  a: {image: *alpine}\n  b: {image: *alpine3}\n",
+		},
+		{
+			name:  "anchored image inside a service",
+			input: "services:\n  a:\n    image: &alpine alpine\n  b:\n    image: *alpine\n",
+			want:  "services:\n  a:\n    image: &alpine alpine@sha256:aaa111\n  b:\n    image: *alpine\n",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			refs, err := Parse([]byte(tt.input))
+			if err != nil {
+				t.Fatalf("Parse() error = %v", err)
+			}
+			digests := map[int]string{}
+			for i := range refs {
+				digests[i] = "sha256:aaa111"
+			}
+			got := RewriteFile(tt.input, refs, digests)
+			if got != tt.want {
+				t.Errorf("RewriteFile() =\n%s\nwant\n%s", got, tt.want)
+			}
+		})
+	}
+}

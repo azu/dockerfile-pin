@@ -72,7 +72,7 @@ func Parse(content []byte) ([]ComposeImageRef, error) {
 		}
 		refs = append(refs, ref)
 	}
-	return uniqueRefs(refs), nil
+	return uniqueRefs(atValueStart(content, refs)), nil
 }
 
 // uniqueRefs keeps one reference for each position in the file.
@@ -96,4 +96,14 @@ func uniqueRefs(refs []ComposeImageRef) []ComposeImageRef {
 		}
 	}
 	return unique
+}
+
+// atValueStart moves each reference from the position of its YAML node to where
+// its text begins, past any anchor or tag written before it.
+func atValueStart(content []byte, refs []ComposeImageRef) []ComposeImageRef {
+	lines := strings.Split(string(content), "\n")
+	for i := range refs {
+		refs[i].Line, refs[i].Column = yamlnode.ValueStart(lines, refs[i].Line, refs[i].Column)
+	}
+	return refs
 }

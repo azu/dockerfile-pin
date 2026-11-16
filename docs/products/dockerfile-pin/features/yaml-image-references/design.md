@@ -49,6 +49,8 @@ This order gives the precedence the [YAML merge key type](https://yaml.org/type/
 
 `Entries(mapping)` returns the keys of a mapping with their resolved values, its own keys first and then the merged keys it does not override. The readers use it to list services and jobs, so an entry that comes from a merged mapping is read as well.
 
+`ValueStart(lines, line, column)` moves a node's position to where the scalar's text begins. `yaml.v3` reports a scalar that has an anchor or a tag at that property, as in `&alpine alpine`, where a search for the image from that column would find the anchor name first and write the digest onto it. The readers apply it to every reference before removing repeated ones, so the rewriter starts its search at the image.
+
 `yaml.v3` accepts a node that contains an alias to itself, such as `a: &a {b: *a}`, so `Lookup` and `Entries` keep a set of visited mapping nodes and stop at one they have already entered.
 
 ### Removing repeated references

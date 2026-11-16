@@ -1,6 +1,7 @@
 package yamlnode
 
 import (
+	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
@@ -137,5 +138,45 @@ func TestEntries_SelfReferencingAnchorEnds(t *testing.T) {
 	entries := Entries(Lookup(root(t, src), "target"))
 	if len(entries) != 1 || entries[0].Key != "a" {
 		t.Errorf("Entries() = %+v, want only a", entries)
+	}
+}
+
+func TestValueStart(t *testing.T) {
+	tests := []struct {
+		name              string
+		src               string
+		line, column      int
+		wantLine, wantCol int
+	}{
+		{name: "plain scalar", src: "image: alpine", line: 1, column: 8, wantLine: 1, wantCol: 8},
+		{name: "anchor", src: "image: &alpine alpine", line: 1, column: 8, wantLine: 1, wantCol: 16},
+		{name: "anchor and tag", src: "image: &a !!str \"alpine\"", line: 1, column: 8, wantLine: 1, wantCol: 17},
+		{name: "tag then anchor", src: "image: !!str &a alpine", line: 1, column: 8, wantLine: 1, wantCol: 17},
+		{name: "value on the next line", src: "image: &a\n  alpine", line: 1, column: 8, wantLine: 2, wantCol: 3},
+		{name: "position outside the text", src: "image: alpine", line: 5, column: 1, wantLine: 5, wantCol: 1},
+		{name: "only properties", src: "image: &a", line: 1, column: 8, wantLine: 1, wantCol: 8},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotLine, gotCol := ValueStart(strings.Split(tt.src, "\n"), tt.line, tt.column)
+			if gotLine != tt.wantLine || gotCol != tt.wantCol {
+				t.Errorf("ValueStart() = %d:%d, want %d:%d", gotLine, gotCol, tt.wantLine, tt.wantCol)
+			}
+		})
+	}
+}
+
+func TestValueStart_MatchesNodePositions(t *testing.T) {
+	// yaml.v3 reports an anchored or tagged scalar at its first property.
+	src := "a: &x !!str v\nb: plain\n"
+	r := root(t, src)
+	lines := strings.Split(src, "\n")
+	a := Lookup(r, "a")
+	if line, col := ValueStart(lines, a.Line, a.Column); line != 1 || col != 13 {
+		t.Errorf("a: node at %d:%d, ValueStart() = %d:%d, want 1:13", a.Line, a.Column, line, col)
+	}
+	b := Lookup(r, "b")
+	if line, col := ValueStart(lines, b.Line, b.Column); line != 1+1 || col != 4 {
+		t.Errorf("b: ValueStart() = %d:%d, want 2:4", line, col)
 	}
 }

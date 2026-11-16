@@ -45,7 +45,7 @@ func Parse(content []byte) ([]GitLabImageRef, error) {
 		var doc yaml.Node
 		err := decoder.Decode(&doc)
 		if errors.Is(err, io.EOF) {
-			return uniqueRefs(refs), nil
+			return uniqueRefs(atValueStart(content, refs)), nil
 		}
 		if err != nil {
 			return nil, fmt.Errorf("parsing YAML: %w", err)
@@ -155,4 +155,14 @@ func uniqueRefs(refs []GitLabImageRef) []GitLabImageRef {
 		unique = append(unique, ref)
 	}
 	return unique
+}
+
+// atValueStart moves each reference from the position of its YAML node to where
+// its text begins, past any anchor or tag written before it.
+func atValueStart(content []byte, refs []GitLabImageRef) []GitLabImageRef {
+	lines := strings.Split(string(content), "\n")
+	for i := range refs {
+		refs[i].Line, refs[i].Column = yamlnode.ValueStart(lines, refs[i].Line, refs[i].Column)
+	}
+	return refs
 }
