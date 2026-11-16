@@ -13,7 +13,7 @@ It belongs to [dockerfile-pin](../../product.md).
 - The YAML positions read in each kind of file, and the references skipped there.
 - How a reference that already has a digest is recognized.
 - How a digest is written into the file text.
-- How YAML anchors and aliases affect which references are read.
+- How references reached through anchors, aliases, and merge keys are read and changed.
 
 ### Out of scope
 
@@ -22,6 +22,7 @@ It belongs to [dockerfile-pin](../../product.md).
 - Ignore patterns, `--update`, and `--min-age`, which belong to their own features.
 - Dockerfiles, which belong to Dockerfile image references.
 - Expanding variables. Compose `${VAR}` and GitHub Actions `${{ }}` expressions are read as written; GitLab CI values containing `$` are skipped as described below.
+- Anchored mappings that no read position uses, such as an `x-*` template that no service merges. Their images are not read.
 
 ## User stories
 
@@ -109,23 +110,59 @@ Scenario: When two references on one line share a prefix, each gets its own dige
 - When: The developer runs `dockerfile-pin run --write`.
 - Then: The line becomes `services: [postgres:18@sha256:<digest of postgres:18>, postgres@sha256:<digest of postgres>]`.
 
-### Read references written with YAML anchors
+### Pin images shared through YAML anchors
 
-As a developer who shares settings with YAML anchors, I want to know which references are read so that I can tell whether an image is pinned.
+As a developer who shares settings with YAML anchors and merge keys, I want the images that services and jobs receive through them to be checked and pinned so that a shared template does not let an unpinned image pass.
 
 **Acceptance criteria:**
 
-Scenario: When an image in a read position carries an anchor, it is read there
+Scenario: When a service receives its image through a merge key, the image is checked where it is written
 
-- Given: A workflow has `jobs.a.container: &c {image: node:20}` and `jobs.b.container: *c`.
+- Given: A compose file has `x-alpine: &alpine` on line 1 with `image: alpine:latest` on line 2, and a service `alpine-template` with only `<<: *alpine`.
+- When: The developer runs `dockerfile-pin check -f test.yml`.
+- Then: `alpine:latest` is reported as `FAIL` with `missing digest` on line 2.
+
+Scenario: When a service receives its image through a merge key, the digest is written in the template
+
+- Given: The same compose file as above.
+- When: The developer runs `dockerfile-pin run --write -f test.yml`.
+- Then: Line 2 becomes `image: alpine:latest@sha256:<digest>`, and the `<<: *alpine` line and the rest of the file are unchanged.
+
+Scenario: When several services merge the same template, the digest is written once
+
+- Given: Services `a` and `b` both have only `<<: *alpine`.
+- When: The developer runs `dockerfile-pin run --write`.
+- Then: Line 2 becomes `image: alpine:latest@sha256:<digest>` with exactly one `@sha256:` in it.
+
+Scenario: When a service writes its own `image` next to a merge key, its own image is used
+
+- Given: A service has `<<: *alpine` and `image: node:20`, and no other service merges `*alpine`.
 - When: The developer runs `dockerfile-pin check`.
-- Then: One result is printed for the line of `jobs.a.container`, and none for `jobs.b`.
+- Then: `node:20` is reported for that service, and nothing is reported for line 2.
 
-Scenario: When an image is reached only through a merge key, it is not read
+Scenario: When a merge key lists several templates, the earlier template wins
 
-- Given: A compose file has `x-alpine: &alpine` with `image: alpine:latest`, and a service `alpine-template` with only `<<: *alpine`.
+- Given: Templates `&a` with `image: a:1` and `&b` with `image: b:1`, and a service with only `<<: [*a, *b]`.
 - When: The developer runs `dockerfile-pin check`.
-- Then: No result is printed for `alpine-template`, and `run` leaves the `x-alpine` line unchanged.
+- Then: `a:1` is reported on the line where it is written, and `b:1` is not reported.
+
+Scenario: When a value is an alias, the image is read where its anchor is written
+
+- Given: A workflow has `jobs.a.container: &c {image: node:20}` and `jobs.b.container: *c`, or a compose file has `x-img: &img alpine:3.20` and a service with `image: *img`.
+- When: The developer runs `dockerfile-pin run --write`.
+- Then: The digest is written after `node:20` or `alpine:3.20` on the anchor's line, and the line with the alias is unchanged.
+
+Scenario: When a service receives `build` through a merge key, its image is skipped
+
+- Given: A template `&built` has `build: .`, and a service has `<<: *built` and `image: myapp:latest`.
+- When: The developer runs `dockerfile-pin check`.
+- Then: `myapp:latest` is reported as `SKIP` with `has build directive`.
+
+Scenario: When no read position uses a template, its image is not read
+
+- Given: A compose file has `x-unused: &unused` with `image: alpine:latest`, and no service merges or aliases it.
+- When: The developer runs `dockerfile-pin check`.
+- Then: No result is printed for that line.
 
 ## KPIs
 
@@ -161,10 +198,19 @@ The root's `image` and `services`, and the `image` and `services` of every other
 The global keywords `variables`, `workflow`, `include`, `stages`, and `spec` are not read as jobs.
 `image` is either a string or a mapping whose `name` is read; each `services` entry is either a string or a mapping whose `name` is read.
 
-##### Anchors and aliases
+##### Anchors, aliases, and merge keys
 
-A scalar in a read position that carries an anchor (`&name`) is read there like any other scalar.
-Aliases (`*name`) and merge keys (`<<`) are not followed, so an image is read only where its text is written in a read position.
+The read positions are looked up in the YAML as compose and GitLab CI interpret it.
+An alias (`*name`) stands for the node its anchor (`&name`) marks, both as a whole value and as a service, job, or mapping.
+A merge key (`<<`) adds the keys of the mapping it names, or of each mapping in the sequence it names, to the mapping that holds it, following the [YAML merge key type](https://yaml.org/type/merge.html): the mapping's own keys win, and an earlier mapping in the sequence wins over a later one.
+Merged mappings may themselves contain merge keys.
+This applies to `build` in compose files as well as to the image positions.
+
+A reference reached through aliases or merge keys is reported and changed at the line and column where its text is written, which is inside the anchored node.
+When one written reference is reached from several services or jobs, it is one reference, and its digest is written once.
+
+The same lookup applies to GitHub Actions files.
+GitHub Actions accepts anchors and aliases but does not document merge keys ([changelog](https://github.blog/changelog/2025-09-18-actions-yaml-anchors-and-non-public-workflow-templates/), [documentation](https://docs.github.com/en/actions/reference/workflows-and-actions/reusing-workflow-configurations#yaml-anchors-and-aliases)), so in practice only aliases occur there.
 
 #### Exceptional behavior
 
@@ -229,9 +275,16 @@ None. Contacting registries belongs to Pinning and Checking.
 
 ## Open questions
 
-### An alias used directly as a compose image
+### How many results `check` prints for a shared reference
 
-- **What to confirm:** In a compose file, `image: *img` is read as an image named `img`, the anchor's name, and `run --write` would write `*img@sha256:<digest>` when an image with that name resolves, which breaks the alias. Whether this is intended.
-- **Candidate and its sources:** Unintended. The GitHub Actions and GitLab CI readers read only scalars and ignore an alias in the same position, and the compose reader does not check the kind of node.
-- **Until decided:** The body does not describe this case.
+- **What to confirm:** When several services or jobs reach one written reference, whether `check` prints one result for it, or one result per service or job on the same line.
+- **Candidate and its sources:** One result. `check` prints the file, line, and text, not the service, so repeated results would be identical lines; Renovate's fix for the same case ([renovatebot/renovate#35844](https://github.com/renovatebot/renovate/pull/35844)) extracts the anchored image as one dependency.
+- **Until decided:** Design treats it as one result.
+- **Who decides:** The maintainer (azu).
+
+### A shared reference that some uses skip
+
+- **What to confirm:** When one written reference is reached from a compose service that has `build` and from one that does not, whether it is skipped or checked.
+- **Candidate and its sources:** Checked and pinned, because the service without `build` pulls the image; no source covers this case.
+- **Until decided:** Design checks it when any use does not skip it.
 - **Who decides:** The maintainer (azu).

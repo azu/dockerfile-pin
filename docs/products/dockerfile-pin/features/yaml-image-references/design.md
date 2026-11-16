@@ -26,14 +26,37 @@ Each kind of YAML file has its own reader and rewriter, `internal/compose`, `int
 ### Reading
 
 The reader decodes the file into a `yaml.Node` tree from `gopkg.in/yaml.v3`, whose nodes keep the line and column where their text starts.
-It walks only the keys listed in the Requirements, using a helper `findMapValue` that scans a mapping's key and value pairs for a key with the given text and returns its value node.
+It walks only the keys listed in the Requirements, looking each key up through a shared lookup that understands aliases and merge keys.
 For each value found, it records the text as written, splits it at the first `@` into image and digest, and marks it skipped when a skip rule applies.
-
-`findMapValue` compares key text only.
-It does not follow an alias node to the node it names, and it treats a merge key `<<` as an ordinary key, so a mapping merged into a service or job is not searched.
-When the value found is itself an alias, the GitHub Actions and GitLab CI readers drop it because they accept only scalar nodes; the compose reader takes the alias node's value, which is the anchor name.
+Finally it removes the references that were reached more than once, so that `run` and `check` receive each written reference once.
 
 The GitLab CI reader uses a decoder loop so that every document of the file is read, since a CI component puts its `spec:` in a separate header document.
+
+### Following aliases and merge keys
+
+Add a small package, `internal/yamlnode`, shared by the three readers, and replace each reader's own `findMapValue` with it.
+It works on the node tree directly instead of expanding the YAML, because an alias node in `yaml.v3` already points at the node its anchor marks, and that node keeps the line and column of the anchored text.
+A reference found through it therefore carries the position inside the anchored node, which is where the rewriter has to write the digest.
+
+`Resolve(node)` follows an alias node to the node it names, repeating while the result is still an alias.
+The readers call it on every node they inspect, including the value of `services`, `jobs`, and each entry, before checking the node's kind.
+After resolving, the compose reader accepts only scalar nodes for `image`, as the other two readers already do, so `image: *img` yields the anchored scalar instead of the anchor name.
+
+`Lookup(mapping, key)` resolves the mapping, then searches its own key and value pairs for the key, skipping merge keys.
+When the key is absent, it visits the merge keys in order. A merge key is a key node tagged `!!merge`, which `yaml.v3` gives to a plain `<<`; a quoted `"<<"` is an ordinary key.
+The merge value is resolved and is either a mapping, which is searched with `Lookup`, or a sequence, whose entries are resolved and searched in order, and the first hit is returned.
+This order gives the precedence the [YAML merge key type](https://yaml.org/type/merge.html) defines, and the one `docker compose config` produces for `<<: [*a, *b]`.
+
+`yaml.v3` accepts a node that contains an alias to itself, such as `a: &a {b: *a}`, so `Lookup` and the walks that descend into merged mappings keep a set of visited mapping nodes and stop at one they have already entered.
+
+### Removing repeated references
+
+Each reader collects references in the order it finds them and then keeps only the first reference for each pair of line and column.
+When the same position is found both skipped and not skipped, as when one compose service with `build` and one without merge the same template, the kept reference is not skipped.
+The rewriter is unchanged: since every reference it receives has a distinct position, a digest is never written twice at one place.
+
+`check` prints the line where the reference is written, which for a shared reference is the line inside the template.
+`ComposeImageRef.ServiceName` and the `Location` of the other two types name the first service or job that reached the reference.
 
 ### Rewriting
 
@@ -70,7 +93,7 @@ A relationship diagram is unnecessary because each file yields a flat list.
 
 ### Reader
 
-`Parse(content []byte)` returns the references of one file in the order they are found.
+`Parse(content []byte)` returns the references of one file in the order they are found, with each written reference once.
 It returns an error wrapping `parsing YAML` when the content is not valid YAML; the caller prints the error with the file name and continues with the next file.
 A compose file whose root is not a mapping, or whose `services` is not a mapping, is an error; such shapes in GitHub Actions and GitLab CI files yield no references.
 
@@ -96,14 +119,35 @@ None. The feature reads and writes local files with the permissions of the user 
 
 The rewriter changes only the reference text on its recorded line, so the rest of the file is written back byte for byte.
 
+Following aliases does not copy or expand nodes, so a file with many aliases to one anchor costs one visit per alias rather than growing like an expanded document, and the visited set stops a self-referencing anchor from looping.
+
 ## Deployment notes
 
 None.
 
 ## Alternatives considered
 
-No record of the alternatives considered for the reader and rewriter exists.
+No record of the alternatives considered for the original reader and rewriter exists. The alternatives below concern following aliases and merge keys.
+
+### Decode into Go maps and let yaml.v3 apply merges
+
+`yaml.v3` applies merge keys when it decodes into `map[string]any`, which would give the merged services directly.
+The decoded values lose their line and column, so the rewriter could not find where to write the digest. It is not chosen.
+
+### Expand the anchors in the file
+
+Writing each merged image into the service that uses it would let the current readers work unchanged.
+It changes the structure the developer chose and turns one shared template into copies that drift apart. It is not chosen.
+
+### Report anchored images without pinning them
+
+The issue's second option is to flag an unpinned image once a template is merged.
+It leaves the developer to pin the template by hand, while the rewriter can already write at the template's position. It is not chosen.
+
+### Selected approach
+
+Following the node tree keeps the positions the rewriter needs and changes only the anchored text, which is also how Renovate fixed the same case: [renovatebot/renovate#35844](https://github.com/renovatebot/renovate/pull/35844) extracts the images used as anchors.
 
 ## Open questions
 
-None.
+Reporting a shared reference once, and checking a shared reference when any use does not skip it, depend on the open questions in the [Requirements](requirements.md#open-questions). If either is decided otherwise, change [Removing repeated references](#removing-repeated-references).
