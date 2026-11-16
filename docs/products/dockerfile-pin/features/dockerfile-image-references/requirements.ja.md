@@ -102,6 +102,12 @@ Dockerfileを管理する開発者として、`run`で`FROM`にdigestを付け�
 - 操作: 開発者が`dockerfile-pin run --write`を実行する。
 - 結果: どちらのオプションも`from=nginx:1.27@sha256:<digest>`になり、それぞれの`@sha256:`はちょうど1つである。
 
+シナリオ: `from`の値かオプションの並び全体が引用符で囲まれているとき、引用符の内側にdigestを書く
+
+- 前提: Dockerfileに`RUN --mount=type=bind,from="nginx:1.27",target=/a true`と`RUN --mount="type=bind,from=nginx:1.27,target=/a" true`がある。
+- 操作: 開発者が`dockerfile-pin run --write`を実行する。
+- 結果: それぞれの行が`RUN --mount=type=bind,from="nginx:1.27@sha256:<digest>",target=/a true`と`RUN --mount="type=bind,from=nginx:1.27@sha256:<digest>,target=/a" true`になる。
+
 シナリオ: `from=`がステージや`scratch`を指すとき、または変数を含むとき、スキップする
 
 - 前提: Dockerfileがステージ`builder`を宣言し、`RUN --mount=from=builder,target=/a`、`RUN --mount=from=scratch,target=/a`、`RUN --mount=from=image:${TAG},target=/a`がある。
@@ -110,7 +116,7 @@ Dockerfileを管理する開発者として、`run`で`FROM`にdigestを付け�
 
 シナリオ: マウントが対応していない書き方のとき、スキップして変えない
 
-- 前提: Dockerfileに、値を引用符で囲んだ`RUN --mount=type=bind,from="nginx:1.27",target=/mnt true`がある。
+- 前提: Dockerfileに、`from`以外の値を引用符で囲んだ`RUN --mount=type=bind,from=nginx:1.27,target="/mnt" true`がある。
 - 操作: 開発者が`dockerfile-pin check`を実行し、続けて`dockerfile-pin run --write`を実行する。
 - 結果: `check`はその参照を`SKIP`として`unsupported RUN --mount syntax`の理由で報告し、`run`はその行を変えない。
 
@@ -175,8 +181,13 @@ Dockerfileを管理する開発者として、`run`で`FROM`にdigestを付け�
 その名前のステージがファイルのどこかで宣言されていれば、名前はステージ参照です。`COPY --from=`と違い、整数はステージの番号ではありません。BuildKitはこの値をステージ名の中からだけ探すので、`from=0`は`0`という名前のイメージとして読みます。
 `ONBUILD RUN`には、`ONBUILD COPY`と同じく、このファイルのステージ名を当てはめません。
 
-pinするのは1つの書き方だけです。フラグが引用符もescapeの文字も使わずに書かれ、オプションがカンマで区切られ、`from`オプションがちょうど1つあるものです。
-値を引用符で囲む、オプションの並びを引用符で囲む、`from`を繰り返すなど、BuildKitが受け付けるほかの書き方は、`check`が表示できるように読み取りますが、スキップし、書き換えません。
+pinするのは2つの構文です。どちらも、オプションをカンマで区切り、`from`オプションがちょうど1つあります。
+
+- オプションの並び: `--mount=type=bind,from=image:tag,target=/mnt`。引用符もescapeの文字も使わずに書いたものです。その変形として、`from`の値を1組の引用符で囲めます（`from="image:tag"`）。
+- 引用符で囲んだオプションの並び: `--mount="type=bind,from=image:tag,target=/mnt"`。1組の引用符が並び全体を囲み、中にほかの引用符がないものです。
+
+引用符は`"`か`'`です。
+`from`以外の値やオプション全体を囲む引用符、escapeの文字、CSVの引用、`from`の繰り返しなど、BuildKitが受け付けるほかの書き方は、`check`が表示できるように読み取りますが、スキップし、書き換えません。
 
 ##### digestとステージ
 
@@ -200,7 +211,7 @@ digest付きの参照は、ステージ参照にはなりません。digestを�
 | 既定値のない`FROM`の変数 | `unresolved ARG variable` |
 | `COPY --from=`の変数 | `unexpanded variable in COPY --from` |
 | `RUN --mount=...,from=`の変数 | `unexpanded variable in RUN --mount from` |
-| 引用符、escapeの文字、2つ以上の`from`を使って書かれた`RUN --mount` | `unsupported RUN --mount syntax` |
+| 対応するどちらの構文でもない書き方の`RUN --mount` | `unsupported RUN --mount syntax` |
 
 スキップした参照は`check`が報告し、`run`は変えません。
 

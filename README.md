@@ -337,7 +337,9 @@ ignore-images:
 | `RUN --mount=type=bind,from=image:tag,...` | Yes |
 | `RUN --mount=...,from=<stage-name>` (multi-stage ref) | Skipped |
 | `RUN --mount=...,from=image:${TAG}` | Skipped (BuildKit does not expand variables here) |
-| `RUN --mount=type=bind,from="image:tag",...` (quotes, escapes, or a repeated `from=`) | Skipped (`unsupported RUN --mount syntax`); write it without quotes to pin it |
+| `RUN --mount=type=bind,from="image:tag",...` (the `from` value in quotes) | Yes |
+| `RUN --mount="type=bind,from=image:tag,..."` (the whole option list in quotes) | Yes |
+| `RUN --mount` with other quotes, escapes, or a repeated `from=` | Skipped (`unsupported RUN --mount syntax`) |
 | `RUN --mount=type=cache,target=...` (no `from=`) | Nothing to pin |
 | `ONBUILD RUN --mount=...,from=image:tag` | Yes |
 

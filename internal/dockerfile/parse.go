@@ -302,8 +302,8 @@ func parseRunMountNode(node *parser.Node, stageNames map[string]bool) []FromInst
 		// value up among stage names only, and otherwise pulls it as an image.
 		inst.ImageRef, inst.Digest, inst.SkipReason, inst.Skip = classifyRef(fromValue, stageNames)
 
-		writtenPlainly := mountIndex < len(written) && written[mountIndex] == flag
-		if !inst.Skip && (!writtenPlainly || !isPlainMount(value, fromValue)) {
+		supported := mountIndex < len(written) && isSupportedMount(written[mountIndex], value, fromValue)
+		if !inst.Skip && !supported {
 			inst.Skip = true
 			inst.SkipReason = SkipMountSyntax
 		}
@@ -331,19 +331,75 @@ func mountFromOption(mount string) (value string, found bool) {
 	return value, found
 }
 
-// isPlainMount reports whether a --mount value is written in the supported form:
-// options separated by commas with no CSV quoting, and exactly one from option,
-// whose value is fromValue.
-func isPlainMount(mount, fromValue string) bool {
-	if strings.ContainsRune(mount, '"') {
+// isSupportedMount reports whether a --mount flag is written in one of the
+// supported forms. writtenFlag is the flag as it stands in the source, parsed the
+// value the Dockerfile parser returned for it, and fromValue the reference.
+//
+// The option list read from the source has to equal the one the parser returned.
+// They differ when the flag uses quotes or escape characters in a way no supported
+// form covers, since the parser removes those.
+func isSupportedMount(writtenFlag, parsed, fromValue string) bool {
+	writtenValue, ok := strings.CutPrefix(writtenFlag, mountFlag)
+	if !ok {
 		return false
 	}
-	_, ok := plainFromOffset(mount, fromValue)
-	return ok
+	options, _, ok := locateMountFrom(writtenValue, fromValue)
+	return ok && options == parsed
 }
 
-// plainFromOffset returns where the value of the only from option starts in a
-// --mount value split at every comma. It fails when there is no from option, more
+// locateMountFrom reads a --mount value as it is written and returns the option
+// list without quotes and where the reference starts in written. Two syntaxes are
+// supported, each read on its own:
+//
+//	type=bind,from=image:tag,target=/mnt      an option list
+//	type=bind,from="image:tag",target=/mnt    its variant with the from value in quotes
+//	"type=bind,from=image:tag,target=/mnt"    a quoted option list
+//
+// Quotes are " or '. In both syntaxes the options are separated by commas and there
+// is exactly one from option, whose value is want. Anything else is not supported.
+func locateMountFrom(written, want string) (options string, offset int, ok bool) {
+	if written == "" {
+		return "", 0, false
+	}
+	if q := written[0]; q == '"' || q == '\'' {
+		return locateInQuotedOptionList(written, q, want)
+	}
+	return locateInOptionList(written, want)
+}
+
+// locateInOptionList reads an option list written without quotes, or with quotes
+// around the from value and nowhere else.
+func locateInOptionList(written, want string) (options string, offset int, ok bool) {
+	switch strings.Count(written, `"`) + strings.Count(written, "'") {
+	case 0:
+		offset, ok = plainFromOffset(written, want)
+		return written, offset, ok
+	case 2:
+		for _, q := range []string{`"`, "'"} {
+			if offset, ok = plainFromOffset(written, q+want+q); ok {
+				return strings.ReplaceAll(written, q, ""), offset + 1, true
+			}
+		}
+	}
+	return "", 0, false
+}
+
+// locateInQuotedOptionList reads an option list enclosed in one pair of quotes, with
+// no other quote inside.
+func locateInQuotedOptionList(written string, quote byte, want string) (options string, offset int, ok bool) {
+	if len(written) < 2 || written[len(written)-1] != quote {
+		return "", 0, false
+	}
+	inner := written[1 : len(written)-1]
+	if strings.ContainsAny(inner, `"'`) {
+		return "", 0, false
+	}
+	offset, ok = plainFromOffset(inner, want)
+	return inner, offset + 1, ok
+}
+
+// plainFromOffset returns where the value of the only from option starts in an
+// option list split at every comma. It fails when there is no from option, more
 // than one, or its value is not want.
 func plainFromOffset(mount, want string) (int, bool) {
 	found, at := 0, 0

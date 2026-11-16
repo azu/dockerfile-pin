@@ -1049,12 +1049,16 @@ func TestCheckRunMountEndToEnd(t *testing.T) {
 		"RUN --mount=from=alpine:3.19@sha256:missingdigest,target=/a true\n" +
 		"RUN --mount=from=scratch,target=/a true\n" +
 		"RUN --mount=from=nginx:${TAG},target=/a true\n" +
-		"RUN --mount=type=cache,target=/cache true\n"
+		"RUN --mount=type=cache,target=/cache true\n" +
+		"RUN --mount=from=\"redis:7\",target=/a true\n" +
+		"RUN --mount=\"from=redis:7@sha256:validdigest,target=/a\" true\n" +
+		"RUN --mount=from=redis:7,target=\"/a\" true\n"
 
 	mock := &resolver.MockResolver{
 		Digests: map[string]string{
 			"busybox:1.36@sha256:validdigest": "sha256:validdigest",
 			"golang:1.22@sha256:golangdigest": "sha256:golangdigest",
+			"redis:7@sha256:validdigest":      "sha256:validdigest",
 		},
 	}
 
@@ -1093,6 +1097,9 @@ func TestCheckRunMountEndToEnd(t *testing.T) {
 		{"alpine:3.19", "fail-notfound"},
 		{"scratch", "skip:" + dockerfile.SkipScratch},
 		{"nginx:${TAG}", "skip:" + dockerfile.SkipMountFromVar},
+		{"redis:7", "fail-missing"},
+		{"redis:7", "ok"},
+		{"redis:7", "skip:" + dockerfile.SkipMountSyntax},
 	}
 	if len(results) != len(expected) {
 		t.Fatalf("got %d results, want %d: %+v", len(results), len(expected), results)
@@ -1149,6 +1156,8 @@ func TestPinRunMountTestdataRoundTrip(t *testing.T) {
 		"    --mount=type=bind,from=busybox:1.36@sha256:busybox333,target=/busybox \\",
 		"    --mount=type=cache,from=registry.example.com:5000/cache:1.0@sha256:cache444,target=/cache \\",
 		"ONBUILD RUN --mount=from=curlimages/curl:8.11.1@sha256:curl555,target=/curl /curl/usr/bin/curl --version",
+		"RUN --mount=type=bind,from=\"nginx:1.27@sha256:nginx222\",target=/mnt/nginx true",
+		"RUN --mount='type=bind,from=busybox:1.36@sha256:busybox333,target=/busybox' true",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("expected pinned line %q\nin:\n%s", want, got)
@@ -1160,6 +1169,7 @@ func TestPinRunMountTestdataRoundTrip(t *testing.T) {
 		"    --mount=type=bind,from=builder,source=/src,target=/src \\",
 		"RUN --mount=from=alpine:3.19@sha256:aaaa1111,target=/alpine cat /alpine/etc/alpine-release",
 		"RUN --mount=from=nginx:${NGINX_VERSION},target=/mnt true",
+		"RUN --mount=type=bind,from=nginx:1.27,target=\"/mnt/nginx\" true",
 		"RUN --mount=type=bind,source=go.mod,target=go.mod --mount=type=secret,id=token go mod download",
 	} {
 		if !strings.Contains(got, want) {

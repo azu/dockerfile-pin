@@ -44,16 +44,18 @@ The same function rejects a `$` in `from` with `'from' doesn't support variable 
 It then classifies the value like `COPY --from` but without the stage index check: BuildKit calls only `findStateByName` for a mount source and otherwise builds a stage from the value as an image name ([convert_runmount.go](https://github.com/moby/buildkit/blob/v0.16.0/frontend/dockerfile/dockerfile2llb/convert_runmount.go)).
 Each reference records the position of its `--mount` flag among the instruction's `--mount` flags, which the rewriter needs.
 
-Reading and writing are kept apart. The reader decides whether a mount is written in the one supported form, and marks every other form as skipped with `unsupported RUN --mount syntax`, so the rewriter never has to interpret quoting.
-The reader splits the instruction text into words at spaces and tabs with no regard to quotes, takes the words between the instruction name and the first word that does not start with `--` as flags, and compares the flag at the same position with the one the parser returned. They differ exactly when the flag was written with quotes or escape characters, because the parser removes those.
-It also requires the value to hold no `"`, which would start CSV quoting, and to have exactly one `from` option when split at every comma.
+Reading and writing are kept apart. The reader decides whether a mount is written in a supported syntax, and marks every other form as skipped with `unsupported RUN --mount syntax`, so the rewriter never has to interpret quoting in general.
+The reader splits the instruction text into words at spaces and tabs with no regard to quotes, takes the words between the instruction name and the first word that does not start with `--` as flags, and reads the flag at the same position as the one the parser returned.
+Each syntax is read by its own function. An option list is split at every comma and must have exactly one `from` option; in its variant, the only two quote characters in the flag enclose that option's value. A quoted option list starts and ends with the same quote, has no other quote inside, and its inside is read as an option list without quotes.
+The option list read this way, with the quotes of the syntax removed, has to equal the value the parser returned. The parser removes quotes and escape characters, so the two differ when the flag uses them in a way neither syntax covers, which also excludes a quoted list that contains a space.
+The same functions return where the reference starts in the written flag, which is where the rewriter writes.
 
 ### Rewriting
 
 The rewriter works on the file as lines and edits them in place.
 For each chosen reference it joins the lines the instruction spans the way the parser does, dropping the escape character and what follows it on continued lines and leaving out comment lines between them, and records for each byte of the joined text the line and column it came from.
 It searches the joined text for the reference, prefixed by `--from=` for `COPY`, then maps the position back to the lines: it removes the bytes of any existing digest and inserts `@<digest>` where the reference without digest ends.
-For `RUN --mount`, the rewriter repeats the reader's plain reading on the joined text: it takes the `--mount=` flag at the recorded position, splits it at every comma, and requires exactly one `from` option whose value is the reference. It writes the digest at that value.
+For `RUN --mount`, the rewriter repeats the reader's plain reading on the joined text: it takes the `--mount=` flag at the recorded position and reads it with the same functions as the reader, which give the position of the reference. It writes the digest right after the reference, so for both quoted forms the digest lands inside the quotes.
 When the text is not in that form, it writes nothing and reports the reference as not found. A skipped reference never reaches this point, so this is a second check behind the reader.
 Searching the joined text is what makes a reference split by a continuation findable; searching each physical line would miss it and leave the file silently unchanged.
 
@@ -109,7 +111,7 @@ It validates the whole Dockerfile and fails on instructions it does not accept, 
 
 An earlier version of this change made the rewriter follow quotes around a value, an option, or the whole option list, CSV quoting inside those, and a repeated `from`.
 Each form needed its own handling of where the bytes are in the source, and each fix exposed another form; one of them wrote the digest into a `source=` path.
-Supporting one plain form and skipping the rest keeps the rule that a digest is never written at the wrong place, at the cost of leaving rare forms for the developer to pin by hand. It is not chosen; a form can be added when it is needed.
+Supporting named syntaxes, each read on its own, and skipping the rest keeps the rule that a digest is never written at the wrong place, at the cost of leaving rare forms for the developer to pin by hand. It is not chosen; a form can be added when it is needed.
 
 ### Treating a number in `from=` as a stage index
 
