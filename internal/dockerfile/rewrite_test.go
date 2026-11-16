@@ -522,6 +522,27 @@ func TestRewriteFile_RunMountFrom(t *testing.T) {
 			want:  "FROM scratch\nRUN --mount=type=bind,FROM=\"nginx:1.27@" + d + "\",target=/a true\n",
 		},
 		{
+			// BuildKit uses the last from, so that is the one to pin.
+			name:  "repeated from pins the last one",
+			input: "FROM scratch\nRUN --mount=from=nginx:1.27,from=nginx:1.27,target=/a true\n",
+			want:  "FROM scratch\nRUN --mount=from=nginx:1.27,from=nginx:1.27@" + d + ",target=/a true\n",
+		},
+		{
+			name:  "source path that looks like the option stays",
+			input: "FROM scratch\nRUN --mount=type=bind,source=from=nginx:1.27,from=nginx:1.27,target=/a true\n",
+			want:  "FROM scratch\nRUN --mount=type=bind,source=from=nginx:1.27,from=nginx:1.27@" + d + ",target=/a true\n",
+		},
+		{
+			name:  "quoted value that looks like another flag",
+			input: "FROM scratch\nRUN --mount=type=bind,source=\"/path --mount=other\",from=nginx:1.27,target=/a --mount=from=busybox:1,target=/b true\n",
+			want:  "FROM scratch\nRUN --mount=type=bind,source=\"/path --mount=other\",from=nginx:1.27@" + d + ",target=/a --mount=from=busybox:1@" + d + ",target=/b true\n",
+		},
+		{
+			name:  "other flags between mounts",
+			input: "FROM scratch\nRUN --network=none --mount=from=nginx:1.27,target=/a --security=insecure --mount=from=busybox:1,target=/b true\n",
+			want:  "FROM scratch\nRUN --network=none --mount=from=nginx:1.27@" + d + ",target=/a --security=insecure --mount=from=busybox:1@" + d + ",target=/b true\n",
+		},
+		{
 			name:  "ONBUILD RUN",
 			input: "FROM scratch\nONBUILD RUN --mount=from=nginx:1.27,target=/a true\n",
 			want:  "FROM scratch\nONBUILD RUN --mount=from=nginx:1.27@" + d + ",target=/a true\n",

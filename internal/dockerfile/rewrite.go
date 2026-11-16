@@ -19,7 +19,7 @@ func AddCopyFromDigest(original string, rawRef string, digest string) string {
 // the reference is not found there.
 func addDigestAfter(line string, prefix string, rawRef string, digest string) string {
 	lines := []string{line}
-	if !rewriteSpan(lines, 0, 0, target{prefixes: []string{prefix}, rawRef: rawRef, mountIndex: -1}, digest, defaultEscape) {
+	if !rewriteSpan(lines, 0, 0, target{prefix: prefix, rawRef: rawRef, mountIndex: -1}, digest, defaultEscape) {
 		return line
 	}
 	return lines[0]
@@ -60,81 +60,144 @@ func RewriteFileReport(content string, instructions []FromInstruction, digests m
 
 // target says where in an instruction's text a reference is written.
 type target struct {
-	// prefixes are the texts that may come right before the reference; the first
-	// one found is used. An empty prefix matches the reference anywhere.
-	prefixes []string
-	rawRef   string
-	// mountIndex, when not negative, limits the search to the text from that
-	// --mount flag on, so that two mounts naming the same image stay apart.
+	// prefix is the text that comes right before the reference. An empty prefix
+	// matches the reference anywhere.
+	prefix string
+	rawRef string
+	// mountIndex, when not negative, names the --mount flag of a RUN whose from
+	// option holds the reference. prefix is not used then.
 	mountIndex int
 }
 
 func targetOf(inst FromInstruction) target {
 	switch {
 	case inst.IsCopyFrom:
-		return target{prefixes: []string{copyFromFlag}, rawRef: inst.RawRef, mountIndex: -1}
+		return target{prefix: copyFromFlag, rawRef: inst.RawRef, mountIndex: -1}
 	case inst.IsMountFrom:
-		key := inst.MountKey
-		if key == "" {
-			key = mountFromKey
-		}
-		// The parser drops quotes around a value, so the source may have them.
-		return target{
-			prefixes:   []string{key + "=", key + `="`, key + `='`},
-			rawRef:     inst.RawRef,
-			mountIndex: inst.MountIndex,
-		}
+		return target{rawRef: inst.RawRef, mountIndex: inst.MountIndex}
 	}
-	return target{prefixes: []string{""}, rawRef: inst.RawRef, mountIndex: -1}
+	return target{rawRef: inst.RawRef, mountIndex: -1}
 }
 
-// find returns where prefix+rawRef starts in the instruction text and the prefix
-// that matched, or -1 when the reference is not written there.
-func (t target) find(logical string) (int, string) {
-	start := 0
+// find returns where the reference itself starts in the instruction text, or -1
+// when it is not written there.
+func (t target) find(logical string, escape byte) int {
 	if t.mountIndex >= 0 {
-		start = mountFlagOffset(logical, t.mountIndex)
-		if start < 0 {
-			return -1, ""
-		}
+		return findMountFrom(logical, t.mountIndex, t.rawRef, escape)
 	}
-	end := len(logical)
-	if t.mountIndex >= 0 {
-		// The reference belongs to this flag, so the next one bounds the search.
-		if next := mountFlagOffset(logical, t.mountIndex+1); next >= 0 {
-			end = next
-		}
+	idx := strings.Index(logical, t.prefix+t.rawRef)
+	if idx < 0 {
+		return -1
 	}
-	best, bestPrefix := -1, ""
-	for _, prefix := range t.prefixes {
-		idx := strings.Index(logical[start:end], prefix+t.rawRef)
-		if idx >= 0 && (best < 0 || start+idx < best) {
-			best, bestPrefix = start+idx, prefix
-		}
-	}
-	return best, bestPrefix
+	return idx + len(t.prefix)
 }
 
-// mountFlagOffset returns where the n-th (0-based) --mount flag starts in an
-// instruction's text, or -1 when there are fewer. Flags come before the command, so
-// the first n+1 occurrences are the flags even if the command repeats the text.
-func mountFlagOffset(logical string, n int) int {
-	offset := 0
-	for {
-		idx := strings.Index(logical[offset:], mountFlag)
-		if idx < 0 {
-			return -1
+// findMountFrom returns where the value of the from option starts inside the n-th
+// (0-based) --mount flag of a RUN, or -1 when that value is not rawRef.
+//
+// The flag and the option are located by reading the text the way BuildKit does,
+// rather than by searching for "from=<ref>": the same text can appear in another
+// option such as source=, and when from is repeated only the last one is used, so
+// a search could pin text the build never reads and leave the real one unpinned.
+func findMountFrom(logical string, n int, rawRef string, escape byte) int {
+	spans := mountFlagSpans(logical, escape)
+	if n >= len(spans) {
+		return -1
+	}
+	start, end := spans[n][0]+len(mountFlag), spans[n][1]
+
+	valueStart := -1
+	for _, field := range splitOptions(logical, start, end, escape) {
+		text := logical[field[0]:field[1]]
+		eq := strings.IndexByte(text, '=')
+		if eq < 0 {
+			continue
 		}
-		pos := offset + idx
-		// A flag starts a word: "x--mount=" inside another word is not one.
-		if pos > 0 && (logical[pos-1] == ' ' || logical[pos-1] == '\t' || logical[pos-1] == '"' || logical[pos-1] == '\'') {
-			if n == 0 {
-				return pos
+		key := strings.TrimLeft(text[:eq], `"'`)
+		if strings.ToLower(key) != mountFromKey {
+			continue
+		}
+		// The last from wins. The parser drops quotes, so one may open the value.
+		valueStart = field[0] + eq + 1
+		if valueStart < field[1] && (logical[valueStart] == '"' || logical[valueStart] == '\'') {
+			valueStart++
+		}
+	}
+	if valueStart < 0 || !strings.HasPrefix(logical[valueStart:end], rawRef) {
+		return -1
+	}
+	return valueStart
+}
+
+// mountFlagSpans returns the [start, end) byte ranges of the --mount flags of a RUN
+// (or ONBUILD RUN) instruction, in order. Flags are the words between the
+// instruction name and the first word that does not start with "--"; a word may
+// hold spaces inside quotes, so "--mount=" inside a quoted value is not a flag.
+func mountFlagSpans(logical string, escape byte) [][2]int {
+	words := splitWords(logical, escape)
+	if len(words) == 0 {
+		return nil
+	}
+	first := 1
+	if strings.EqualFold(logical[words[0][0]:words[0][1]], "onbuild") {
+		first = 2
+	}
+	var spans [][2]int
+	for _, w := range words[min(first, len(words)):] {
+		text := logical[w[0]:w[1]]
+		if !strings.HasPrefix(text, "--") {
+			break
+		}
+		if strings.HasPrefix(text, mountFlag) {
+			spans = append(spans, w)
+		}
+	}
+	return spans
+}
+
+// splitWords returns the [start, end) ranges of the whitespace-separated words of
+// text, keeping quoted spaces and escaped characters inside a word.
+func splitWords(text string, escape byte) [][2]int {
+	return splitOutsideQuotes(text, 0, len(text), escape, func(b byte) bool { return b == ' ' || b == '\t' })
+}
+
+// splitOptions returns the ranges of the comma-separated options in text[start:end].
+func splitOptions(text string, start, end int, escape byte) [][2]int {
+	return splitOutsideQuotes(text, start, end, escape, func(b byte) bool { return b == ',' })
+}
+
+// splitOutsideQuotes splits text[start:end] at the bytes isSep accepts, ignoring
+// those inside single or double quotes or right after the escape character. Empty
+// pieces are dropped.
+func splitOutsideQuotes(text string, start, end int, escape byte, isSep func(byte) bool) [][2]int {
+	var pieces [][2]int
+	pieceStart := -1
+	var quote byte
+	for i := start; i < end; i++ {
+		b := text[i]
+		if quote == 0 && isSep(b) {
+			if pieceStart >= 0 {
+				pieces = append(pieces, [2]int{pieceStart, i})
+				pieceStart = -1
 			}
-			n--
+			continue
 		}
-		offset = pos + len(mountFlag)
+		if pieceStart < 0 {
+			pieceStart = i
+		}
+		switch {
+		case b == escape && quote != '\'' && i+1 < end:
+			i++
+		case quote == 0 && (b == '"' || b == '\''):
+			quote = b
+		case b == quote:
+			quote = 0
+		}
 	}
+	if pieceStart >= 0 {
+		pieces = append(pieces, [2]int{pieceStart, end})
+	}
+	return pieces
 }
 
 // rewriteSpan pins the reference inside the lines an instruction covers, editing lines
@@ -150,8 +213,8 @@ func rewriteSpan(lines []string, first, last int, t target, digest string, escap
 		return false
 	}
 	logical, origin := joinContinued(lines, first, last, escape)
-	idx, prefix := t.find(logical)
-	if idx < 0 {
+	refStart := t.find(logical, escape)
+	if refStart < 0 {
 		return false
 	}
 
@@ -161,8 +224,8 @@ func rewriteSpan(lines []string, first, last int, t target, digest string, escap
 	if atIdx := strings.Index(rawRef, "@"); atIdx >= 0 {
 		baseRef = rawRef[:atIdx]
 	}
-	cutFrom := idx + len(prefix) + len(baseRef)
-	cutTo := idx + len(prefix) + len(rawRef)
+	cutFrom := refStart + len(baseRef)
+	cutTo := refStart + len(rawRef)
 
 	// Where the replaced range starts, and which columns of which lines it covers.
 	insertLine, insertCol := last, len(lines[last])

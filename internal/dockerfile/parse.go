@@ -52,12 +52,10 @@ type FromInstruction struct {
 	SkipReason string
 	IsCopyFrom bool // true for COPY --from=<ref>
 	// IsMountFrom is true for RUN --mount=...,from=<ref>. MountIndex is then the
-	// position of that --mount flag among the instruction's --mount flags, and
-	// MountKey the option key as written ("from", or another casing of it), which
-	// together tell the rewriter where the reference is.
+	// position of that --mount flag among the instruction's --mount flags, which
+	// tells the rewriter which flag holds the reference.
 	IsMountFrom bool
 	MountIndex  int
-	MountKey    string
 	// EscapeToken is the character that continues a line, from the "# escape="
 	// parser directive. Zero means the Dockerfile default, a backslash.
 	// https://docs.docker.com/reference/dockerfile/#escape
@@ -268,7 +266,7 @@ func parseRunMountNode(node *parser.Node, stageNames map[string]bool) []FromInst
 			continue
 		}
 		mountIndex++
-		key, fromValue, ok := mountFromOption(value)
+		fromValue, ok := mountFromOption(value)
 		// BuildKit treats an empty from= like a missing one.
 		if !ok || fromValue == "" {
 			continue
@@ -282,7 +280,6 @@ func parseRunMountNode(node *parser.Node, stageNames map[string]bool) []FromInst
 			ImageRef:    fromValue,
 			IsMountFrom: true,
 			MountIndex:  mountIndex,
-			MountKey:    key,
 		}
 
 		// BuildKit refuses a variable here ("'from' doesn't support variable
@@ -303,23 +300,23 @@ func parseRunMountNode(node *parser.Node, stageNames map[string]bool) []FromInst
 	return instructions
 }
 
-// mountFromOption returns the from option of a --mount flag value, with the key as
-// written. The value is a comma-separated list of key=value options; when from is
-// repeated the last one wins, as in BuildKit.
-func mountFromOption(mount string) (key, value string, found bool) {
+// mountFromOption returns the from option of a --mount flag value. The value is a
+// comma-separated list of key=value options; when from is repeated the last one
+// wins, as in BuildKit.
+func mountFromOption(mount string) (value string, found bool) {
 	reader := csv.NewReader(strings.NewReader(mount))
 	reader.LazyQuotes = true
 	fields, err := reader.Read()
 	if err != nil {
-		return "", "", false
+		return "", false
 	}
 	for _, field := range fields {
 		k, v, ok := strings.Cut(field, "=")
 		if ok && strings.ToLower(k) == mountFromKey {
-			key, value, found = k, v, true
+			value, found = v, true
 		}
 	}
-	return key, value, found
+	return value, found
 }
 
 // copyFromValue returns the value of the --from= flag among a COPY node's flags.

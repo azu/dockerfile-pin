@@ -42,16 +42,17 @@ For `COPY --from`, a stage index (anything `strconv.Atoi` accepts) and a `$` in 
 For `RUN`, the parser returns each leading flag with its quotes removed, so the reader takes the flags that start with `--mount=`, splits each value as one CSV record, and uses the value of the last `from` option, with the key lowercased for comparison as BuildKit's `parseMount` does ([commands_runmount.go](https://github.com/moby/buildkit/blob/v0.16.0/frontend/dockerfile/instructions/commands_runmount.go)).
 The same function rejects a `$` in `from` with `'from' doesn't support variable expansion, define alias stage instead`, which is why such a value is skipped.
 It then classifies the value like `COPY --from` but without the stage index check: BuildKit calls only `findStateByName` for a mount source and otherwise builds a stage from the value as an image name ([convert_runmount.go](https://github.com/moby/buildkit/blob/v0.16.0/frontend/dockerfile/dockerfile2llb/convert_runmount.go)).
-Each reference records the position of its `--mount` flag among the instruction's `--mount` flags and the option key as written, which the rewriter needs.
+Each reference records the position of its `--mount` flag among the instruction's `--mount` flags, which the rewriter needs.
 
 ### Rewriting
 
 The rewriter works on the file as lines and edits them in place.
 For each chosen reference it joins the lines the instruction spans the way the parser does, dropping the escape character and what follows it on continued lines, and records for each byte of the joined text the line and column it came from.
 It searches the joined text for the reference, prefixed by `--from=` for `COPY`, then maps the position back to the lines: it removes the bytes of any existing digest and inserts `@<digest>` where the reference without digest ends.
-For `RUN --mount`, the search is limited to the text of that mount flag: it starts at the flag with the recorded position, found by counting the `--mount=` texts that start a word, and ends at the next one. Flags come before the command, so the count is right even when the command repeats the text.
-Inside that range it looks for the key as written followed by `=` and the reference, also allowing a quote after `=`, because the parser drops quotes that the source still has.
-Bounding the search this way keeps two mounts that name the same image apart; searching the whole instruction would find the first one twice and write two digests onto it.
+For `RUN --mount`, the reference is located by reading the text instead of searching for it.
+The rewriter splits the instruction into words, keeping quoted spaces inside a word, and takes the words between the instruction name and the first word that does not start with `--` as the flags; the `--mount=` flag with the recorded position is the one to change.
+It splits that flag at the commas outside quotes, takes the last option whose key is `from` without regard to case, and writes the digest at its value, after an opening quote if there is one.
+A search for `from=<reference>` would be wrong in three cases: two mounts that name the same image, where it finds the first one twice; a repeated `from`, where BuildKit uses the last one and the first would be pinned; and the same text inside another option such as `source=`.
 Searching the joined text is what makes a reference split by a continuation findable; searching each physical line would miss it and leave the file silently unchanged.
 
 When the reference is not found, the rewriter returns the reference's index in a list of unrewritten references, so `run` can warn and leave it out of its count.
@@ -62,7 +63,7 @@ A diagram is unnecessary: the flow is `Parse` → caller decides digests → `Re
 
 ## Data model and ER diagrams
 
-`FromInstruction` holds `RawRef`, `ImageRef`, `Digest`, `Platform`, `StageName`, `StartLine`, `EndLine`, `Original`, `Skip`, `SkipReason`, `IsCopyFrom`, `IsMountFrom`, `MountIndex`, `MountKey`, and `EscapeToken`.
+`FromInstruction` holds `RawRef`, `ImageRef`, `Digest`, `Platform`, `StageName`, `StartLine`, `EndLine`, `Original`, `Skip`, `SkipReason`, `IsCopyFrom`, `IsMountFrom`, `MountIndex`, and `EscapeToken`.
 Skip reasons are exported constants so callers and tests do not repeat the strings.
 
 ## APIs and interfaces
